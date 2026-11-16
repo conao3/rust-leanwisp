@@ -4,6 +4,16 @@ open Lean
 -- Separate original token tags from synthetic tags already in parser trees.
 def lexemeTagBase : Nat := 2 ^ 64
 def continuationTagBase : Nat := 2 ^ 65
+def markBase : Nat := 2 ^ 66
+def markScale : Nat := 2 ^ 48
+def markDeclEq : Nat := 1
+def markAttrClose : Nat := 2
+def markWhere : Nat := 3
+def markSigColon : Nat := 4
+def markBinder : Nat := 5
+def breakTagBase : Nat := 2 ^ 67
+def blockBreakTag : Nat := 2 ^ 68
+def commandTagBase : Nat := 2 ^ 69
 
 partial def fingerprint : Syntax → Json
   | .missing => toJson ("missing" : String)
@@ -20,7 +30,10 @@ partial def document : Std.Format → Json
   | .append a b => Json.arr #[toJson "append", document a, document b]
   | .group child behavior => Json.arr #[toJson "group", document child,
       toJson (behavior == .fill)]
-  | .tag _ child => document child
+  | .tag tag child => if tag >= commandTagBase then Json.arr #[toJson "command", toJson (tag - commandTagBase)]
+      else if tag >= blockBreakTag then Json.arr #[toJson "block", toJson ((tag - blockBreakTag : Int) - 64)]
+      else if breakTagBase <= tag then Json.arr #[toJson "break", toJson ((tag - breakTagBase : Int) - 64)]
+      else document child
 
 partial def trivia : Syntax → Array Json
   | .node _ _ args => args.foldl (fun acc s => acc ++ trivia s) #[]
@@ -40,17 +53,53 @@ partial def markContinuation : Syntax → Syntax
     else .node info kind (args.map markContinuation)
   | stx => stx
 
+def markAtom (code : Nat) : Syntax → Syntax
+  | stx@(.atom (.synthetic pos tail) value) =>
+    if pos.byteIdx < lexemeTagBase || pos.byteIdx >= continuationTagBase then stx else
+      .atom (.synthetic ⟨markBase + code * markScale + (pos.byteIdx - lexemeTagBase)⟩ tail) value
+  | stx => stx
+
+def markFirstAtom (code : Nat) (stx : Syntax) : Syntax :=
+  if stx.getNumArgs > 0 && stx[0].isAtom then stx.setArg 0 (markAtom code stx[0]) else stx
+
+def markSignature (binders : Syntax) (typeSpec : Syntax) : Syntax × Syntax :=
+  (binders.setArgs (binders.getArgs.map (markFirstAtom markBinder)),
+    markFirstAtom markSigColon typeSpec)
+
+def markLayout (kind : SyntaxNodeKind) (args : Array Syntax) : Array Syntax :=
+  if kind == `Lean.Parser.Command.declValSimple || kind == `Lean.Parser.Command.whereStructInst then
+    args.modify 0 (markAtom (if kind == `Lean.Parser.Command.whereStructInst then markWhere else markDeclEq))
+  else if kind == `Lean.Parser.Term.attributes && args.size == 3 then
+    args.modify 2 (markAtom markAttrClose)
+  else if kind == `Lean.Parser.Command.declSig && args.size == 2 then
+    let (binders, typeSpec) := markSignature args[0]! args[1]!
+    #[binders, typeSpec]
+  else if kind == `Lean.Parser.Command.optDeclSig && args.size == 2 && args[1]!.getNumArgs == 1 then
+    let (binders, typeSpec) := markSignature args[0]! args[1]![0]!
+    #[binders, args[1]!.setArg 0 typeSpec]
+  else if kind == `Lean.Parser.Command.optDeclSig && args.size == 2 then
+    #[(markSignature args[0]! .missing).1, args[1]!]
+  else args
+
 -- Keep trivia out of width/indentation groups. Rust restores comment-bearing gaps
 -- at their corresponding token boundaries after laying out the syntax.
 partial def withoutTrivia : Syntax → Syntax
   | .node info kind args =>
-    let args := args.map withoutTrivia
+    let args := markLayout kind (args.map withoutTrivia)
     -- The continuation after a pattern-let failure branch is at the enclosing
     -- do indentation, rather than inside the failure branch.
     let args := if [ `Lean.Parser.Term.doLetElse, `Lean.Parser.Term.doLetExpr,
         `Lean.Parser.Term.doLetMetaExpr ].contains kind then
       args.modify (args.size - 1) markContinuation
       else args
+    let info := match args[0]? with
+      | some (Syntax.atom (.synthetic pos _) _) =>
+        if args.size == 1 && [numLitKind, strLitKind, charLitKind, scientificLitKind,
+            nameLitKind].contains kind then .synthetic pos pos else info
+      | some (Syntax.node (.synthetic pos _) child _) =>
+        if args.size == 1 && [numLitKind, strLitKind, charLitKind, scientificLitKind,
+            nameLitKind].contains child then .synthetic pos pos else info
+      | _ => info
     .node info kind args
   | .atom (.original _ pos _ tail) value =>
     .atom (if pos == tail then .original "".toRawSubstring pos "".toRawSubstring tail
@@ -71,6 +120,7 @@ partial def lexemes (source : String) : Syntax → Array (Nat × String)
 
 partial def lexemeText (raw : String) : Std.Format → Std.Format
   | .text value =>
+    if value == "\n|" || value == "\n| " then .text "\n" ++ .text (value.drop 1).toString else
     if value.trimAscii.isEmpty || value.trimAscii.toString == raw.trimAscii.toString then
       .text value
     else
@@ -83,10 +133,11 @@ partial def lexemeText (raw : String) : Std.Format → Std.Format
   | .tag tag child => .tag tag (lexemeText raw child)
   | fmt => fmt
 
-partial def restoreLexemes (ids : Array (Nat × String)) : Std.Format → Std.Format
-  | .tag tag child => if tag >= continuationTagBase then
-      .nest (-4) (.align true ++ restoreLexemes ids child) else match ids.find? (fun entry => entry.1 == tag) with
-    | some (_, raw) => lexemeText raw child
+partial def restoreLexemes (ids : Std.HashMap Nat String) : Std.Format → Std.Format
+  | .tag tag child => if breakTagBase <= tag then .tag tag child
+    else if continuationTagBase <= tag then
+      .nest (-4) (.align true ++ restoreLexemes ids child) else match ids.get? tag with
+    | some raw => lexemeText raw child
     | none => restoreLexemes ids child
   | .append a b => .append (restoreLexemes ids a) (restoreLexemes ids b)
   | .nest n child => .nest n (restoreLexemes ids child)
@@ -115,8 +166,8 @@ partial def changesParser : Syntax → Bool
   | .node _ `Lean.Parser.Command.declaration _ => false
   | .node _ `Lean.Parser.Command.in _ => false
   | .node _ `Lean.Parser.Command.mutual _ => false
-  | .atom _ value => ["syntax", "macro", "macro_rules", "notation", "infix", "infixl", "infixr",
-      "prefix", "postfix", "declare_syntax_cat", "namespace", "section", "end", "open",
+  | .atom _ value => ["syntax", "macro", "macro_rules", "elab", "elab_rules", "notation", "infix",
+      "infixl", "infixr", "prefix", "postfix", "declare_syntax_cat", "namespace", "section", "end", "open",
       "set_option"].contains value
   | .node _ _ args => args.any changesParser
   | _ => false
@@ -131,8 +182,246 @@ def parserCommand (cmd : Syntax) : Syntax := Id.run do
       return cmd.setArg 1 (mkNullNode #[])
   return cmd
 
+partial def edgeText (last : Bool) : Std.Format → Option String
+  | .text value => if value.trimAscii.isEmpty then none else some value.trimAscii.toString
+  | .append a b =>
+    let (x, y) := if last then (b, a) else (a, b)
+    (edgeText last x).orElse fun _ => edgeText last y
+  | .nest _ child | .group child _ | .tag _ child => edgeText last child
+  | _ => none
+
+partial def spaceLastLine : Std.Format → Std.Format
+  | .append a .line => .append a (.text " ")
+  | .append a b => .append a (spaceLastLine b)
+  | .tag tag child => .tag tag (spaceLastLine child)
+  | fmt => fmt
+
+partial def flattenElseIf : Std.Format → Std.Format
+  | .append a (.group (.nest n inner) behavior) =>
+    let (a, inner) := (flattenElseIf a, flattenElseIf inner)
+    if edgeText true a == some "else" && edgeText false inner == some "if" then
+      .append (spaceLastLine a) (.group inner behavior)
+    else .append a (.group (.nest n inner) behavior)
+  | .append a b => .append (flattenElseIf a) (flattenElseIf b)
+  | .nest n child => .nest n (flattenElseIf child)
+  | .group child behavior => .group (flattenElseIf child) behavior
+  | .tag tag child => .tag tag (flattenElseIf child)
+  | fmt => fmt
+
+inductive LayoutEvent where
+  | token (code pos : Nat)
+  | leaf (fmt : Std.Format) (fill : Bool)
+
+partial def layoutEvents (fill : Bool) : Std.Format → Array LayoutEvent → Array LayoutEvent
+  | .tag tag child, acc =>
+    let acc := if tag >= markBase then
+        acc.push (.token ((tag - markBase) / markScale) ((tag - markBase) % markScale))
+      else if lexemeTagBase <= tag && tag < continuationTagBase then
+        acc.push (.token 0 (tag - lexemeTagBase))
+      else acc
+    layoutEvents fill child acc
+  | .append a b, acc => layoutEvents fill b (layoutEvents fill a acc)
+  | .nest _ child, acc => layoutEvents fill child acc
+  | .group child behavior, acc => layoutEvents (behavior == .fill) child acc
+  | fmt, acc => acc.push (.leaf fmt fill)
+
+def isBlank : Std.Format → Bool
+  | .nil => true
+  | .text value => value.isEmpty
+  | _ => false
+
+def isHardBreak : Std.Format → Bool
+  | .text value => value.contains '\n' && value.all Char.isWhitespace
+  | _ => false
+
+def isSpace : Std.Format → Bool
+  | .line => true
+  | .text value => !value.isEmpty && value.all Char.isWhitespace
+  | _ => false
+
+def lineIndent (bytes : ByteArray) (pos : Nat) : Int := Id.run do
+  let mut start := pos
+  while start > 0 && bytes.get! (start - 1) != 10 do start := start - 1
+  let mut stop := start
+  while stop < bytes.size && bytes.get! stop == 32 do stop := stop + 1
+  return stop - start
+
+def breakingTokens : List String := [":=", "=>", "↦", "<|", "<;>", "by"]
+
+structure Token where
+  code : Nat
+  pos : Nat
+  leaf : Nat
+  deriving Inhabited
+
+def layoutReplacements (source : String) (lengths : Std.HashMap Nat Nat) (conservative : Bool)
+    (fmt : Std.Format) :
+    Std.HashMap Nat Std.Format := Id.run do
+  let bytes := source.toUTF8
+  let mut leaves : Array Std.Format := #[]
+  let mut fills : Array Bool := #[]
+  let mut tokens : Array Token := #[]
+  for event in layoutEvents false fmt #[] do
+    match event with
+    | .token code pos => tokens := tokens.push { code, pos, leaf := leaves.size }
+    | .leaf leaf fill =>
+      leaves := leaves.push leaf
+      fills := fills.push fill
+  let text (t : Token) : String :=
+    String.Pos.Raw.extract source ⟨t.pos⟩ ⟨t.pos + lengths.getD t.pos 0⟩
+  let breakBetween (a b : Token) : Bool :=
+    let stop := a.pos + lengths.getD a.pos 0
+    stop <= b.pos && (String.Pos.Raw.extract source ⟨stop⟩ ⟨b.pos⟩).contains '\n'
+  let next (i : Nat) : Option Nat := Id.run do
+    let mut j := i + 1
+    while j < leaves.size && isBlank leaves[j]! do j := j + 1
+    return if j < leaves.size then some j else none
+  let prev (i : Nat) : Option Nat := Id.run do
+    let mut j := i
+    while j > 0 && isBlank leaves[j - 1]! do j := j - 1
+    return if j > 0 then some (j - 1) else none
+  let mut result : Std.HashMap Nat Std.Format := {}
+  let mut decided : Std.HashSet Nat := {}
+  let breakAt (before after : Token) : Std.Format :=
+    let delta := lineIndent bytes after.pos - lineIndent bytes before.pos
+    .tag (breakTagBase + (64 + min 4 (max (-64) delta)).toNat) (.text "\n")
+  for i in [1:tokens.size] do
+    let (before, after) := (tokens[i - 1]!, tokens[i]!)
+    if text before == "{" && text after == "}" && before.pos + 1 == after.pos then
+      for j in [before.leaf:after.leaf] do
+        if isSpace leaves[j]! then
+          result := result.insert j .nil
+          decided := decided.insert j
+      if leaves[after.leaf]! matches .text " }" then result := result.insert after.leaf (.text "}")
+  if conservative then
+    for i in [1:tokens.size] do
+      let (before, after) := (tokens[i - 1]!, tokens[i]!)
+      let range := (List.range (after.leaf - before.leaf)).map (before.leaf + ·)
+      let breaks := range.filter fun j => leaves[j]! matches .line || isHardBreak leaves[j]!
+      let chosen := if breakBetween before after then breaks.getLast? else breaks.head?
+      for j in range do
+        if leaves[j]! matches .align _ then result := result.insert j .nil
+      let mut spaced := false
+      for j in range do
+        if breaks.contains j then
+          result := result.insert j (if breakBetween before after then
+              (if some j == chosen then breakAt before after else .nil)
+            else if spaced then .nil else .text " ")
+          spaced := true
+        else if !(isSpace leaves[j]! || isBlank leaves[j]!) then spaced := false
+    return result
+  for i in [0:tokens.size] do
+    let token := tokens[i]!
+    let following := tokens[i + 1]?
+    let sourceBreak := following.any (breakBetween token)
+    if token.code == markDeclEq then
+      if let some j := next token.leaf then
+        if sourceBreak && leaves[j]! matches .line then result := result.insert j (.text "\n")
+        if !sourceBreak && isHardBreak leaves[j]! then result := result.insert j .line
+        decided := decided.insert j
+    else if token.code == markAttrClose then
+      if let some j := next token.leaf then
+        if isHardBreak leaves[j]! && sourceBreak then
+          decided := decided.insert j
+        else if isSpace leaves[j]! then
+          result := result.insert j (if sourceBreak then .nest (-2) (.text "\n") else .text " ")
+          decided := decided.insert j
+    else if token.code == markWhere then
+      if let some j := prev token.leaf then
+        if leaves[j]! matches .line then result := result.insert j (.text " ")
+      if let some j := next token.leaf then
+        if sourceBreak && leaves[j]! matches .line then result := result.insert j (.text "\n")
+        decided := decided.insert j
+    else if token.code == markSigColon && sourceBreak then
+      if let some j := next token.leaf then
+        if leaves[j]! matches .line then
+          result := result.insert j (.text "\n")
+          decided := decided.insert j
+    else if token.code == markBinder && i > 0 && breakBetween tokens[i - 1]! token then
+      if let some j := prev token.leaf then
+        if leaves[j]! matches .line then
+          result := result.insert j (.text "\n")
+          decided := decided.insert j
+  for i in [1:tokens.size] do
+    let (before, after) := (tokens[i - 1]!, tokens[i]!)
+    if !breakBetween before after then continue
+    let range := (List.range (after.leaf - before.leaf)).map (before.leaf + ·)
+    if text before == "by" || text before == "do" then
+      if let some j := range.find? (fun j => leaves[j]! matches .align _ || leaves[j]! matches .line || isHardBreak leaves[j]!) then
+        if !result.contains j && !decided.contains j then
+          let delta := lineIndent bytes after.pos - lineIndent bytes before.pos
+          result := result.insert j (.tag (blockBreakTag + (64 + min 4 (max (-64) delta)).toNat) (.text "\n"))
+          continue
+    if range.any (fun j => isHardBreak leaves[j]! || result.contains j || decided.contains j) then
+      continue
+    let breaking := breakingTokens.contains (text before)
+    if let some j := range.reverse.find? (fun j => leaves[j]! matches .line && (fills[j]! || breaking)) then
+      result := result.insert j (breakAt before after)
+  for i in [1:tokens.size] do
+    let (before, after) := (tokens[i - 1]!, tokens[i]!)
+    if breakBetween before after then continue
+    let spaced := (List.range (after.leaf - before.leaf)).any fun k =>
+      let j := before.leaf + k
+      !isHardBreak leaves[j]! && isSpace leaves[j]!
+    for j in [before.leaf:after.leaf] do
+      if isHardBreak leaves[j]! && !decided.contains j && !result.contains j then
+        result := result.insert j (if spaced then .nil else .text " ")
+  return result
+
+partial def applyReplacements (result : Std.HashMap Nat Std.Format) :
+    Std.Format → StateM Nat Std.Format
+  | .tag tag child => do
+    let child ← applyReplacements result child
+    return if tag >= markBase then .tag (lexemeTagBase + (tag - markBase) % markScale) child
+      else .tag tag child
+  | .append a b => return .append (← applyReplacements result a) (← applyReplacements result b)
+  | .nest indent child => return .nest indent (← applyReplacements result child)
+  | .group child behavior => return .group (← applyReplacements result child) behavior
+  | fmt => do
+    let i ← get
+    set (i + 1)
+    return result.getD i fmt
+
+def applyLayoutMarks (source : String) (lengths : Std.HashMap Nat Nat) (conservative : Bool)
+    (fmt : Std.Format) : Std.Format :=
+  (applyReplacements (layoutReplacements source lengths conservative fmt) fmt).run' 0
+
+partial def dropLastBreak : Std.Format → Std.Format
+  | .append a (.text "\n") => a
+  | .append a b => .append a (dropLastBreak b)
+  | .group child behavior => .group (dropLastBreak child) behavior
+  | fmt => fmt
+
+def blankLineBetween (gap : String) : Bool :=
+  let lines := gap.splitOn "\n"
+  lines.length > 2 && (lines.drop 1 |>.dropLast).any (·.all Char.isWhitespace)
+
+def commandIndices (name : String) : IO (Array Nat) := do
+  let some value ← IO.getEnv name | return #[]
+  return (value.splitOn ",").toArray.filterMap (·.trimAscii.toString.toNat?)
+
+def offRegions (source : String) : Array (Nat × Nat) := Id.run do
+  let mut regions := #[]
+  let mut start : Option Nat := none
+  let mut pos := 0
+  for line in source.splitOn "\n" do
+    let text := line.trimAscii.toString
+    if text == "-- leanwisp: off" && start.isNone then start := some pos
+    if text == "-- leanwisp: on" then
+      if let some s := start then regions := regions.push (s, pos)
+      start := none
+    pos := pos + line.utf8ByteSize + 1
+  if let some s := start then regions := regions.push (s, source.utf8ByteSize + 1)
+  return regions
+
+structure Collected where
+  commands : Array Syntax := #[]
+  docs : Array Std.Format := #[]
+  kept : Array Json := #[]
+  index : Nat := 0
+
 open Elab Frontend in
-partial def collect : FrontendM (Array Syntax × Array Std.Format) := do
+partial def collect (verbatim : Array Nat) (off : Array (Nat × Nat)) (acc : Collected) : FrontendM Collected := do
   let ctx ← getInputContext
   let cs ← getCommandState
   let ps ← getParserState
@@ -145,23 +434,52 @@ partial def collect : FrontendM (Array Syntax × Array Std.Format) := do
   if messages.hasErrors then
     messages.forM fun msg => do IO.eprintln (← msg.toString)
     throw (IO.userError "invalid Lean syntax")
-  let fmt ← runCommandElabM <| Command.liftCoreM <| PrettyPrinter.formatCategory `command (withoutTrivia cmd)
-  let fmt := if cmd.isOfKind `Lean.Parser.Command.moduleDoc then
-    Std.Format.text (String.Pos.Raw.extract ctx.inputString
-      (cmd.getPos?.getD 0) (cmd.getTailPos?.getD 0)) else fmt
-  if cmd.isOfKind `Lean.Parser.Command.eoi then return (#[cmd], #[fmt])
+  let start := (cmd.getPos?.getD 0).byteIdx
+  let original := Std.Format.text (String.Pos.Raw.extract ctx.inputString
+    (cmd.getPos?.getD 0) (cmd.getTailPos?.getD 0))
+  let keep (reason : String) : Collected × Std.Format :=
+    ({ acc with kept := acc.kept.push (Json.arr #[toJson acc.index, toJson start, toJson reason]) },
+      original)
+  let (acc, fmt) ← if cmd.isOfKind `Lean.Parser.Command.moduleDoc then pure (acc, original)
+    else if verbatim.contains acc.index then pure (keep "requested")
+    else if off.any (fun (a, b) => a <= start && start < b) then pure (keep "disabled")
+    else
+      let result ← runCommandElabM do
+        try
+          return Except.ok (← Command.liftCoreM <|
+            PrettyPrinter.formatCategory `command (withoutTrivia cmd))
+        catch ex => return Except.error (← ex.toMessageData.toString)
+      match result with
+      | .ok fmt => pure (acc, flattenElseIf fmt)
+      | .error message => pure (keep message)
+  let acc := { acc with
+    commands := acc.commands.push cmd, docs := acc.docs.push fmt, index := acc.index + 1 }
+  if cmd.isOfKind `Lean.Parser.Command.eoi then return acc
   if changesParser cmd then
     elabCommandAtFrontend (parserCommand cmd)
-    if (← getCommandState).messages.hasErrors then
-      (← getCommandState).messages.forM fun msg => do IO.eprintln (← msg.toString)
-      throw (IO.userError "cannot elaborate parser-changing command")
-  let (commands, docs) ← collect
-  return (#[cmd] ++ commands, #[fmt] ++ docs)
+    modify fun st => { st with commandState := { st.commandState with messages := {} } }
+  collect verbatim off acc
+
+def joinCommands (source : String) (commands : Array Syntax) (docs : Array Std.Format) :
+    Std.Format := Id.run do
+  let mut fmt := Std.Format.nil
+  for i in [0:docs.size] do
+    if i > 0 then
+      let gap := String.Pos.Raw.extract source (commands[i - 1]!.getTailPos?.getD 0)
+        (commands[i]!.getPos?.getD 0)
+      fmt := fmt ++ Std.Format.line ++ (if blankLineBetween gap then Std.Format.line else .nil)
+    fmt := fmt ++ .tag (commandTagBase + i) .nil ++ docs[i]!
+  return fmt
+
+def commandRange (cmd : Syntax) : Json :=
+  Json.arr #[toJson (cmd.getPos?.getD 0).byteIdx, toJson (cmd.getTailPos?.getD 0).byteIdx]
 
 unsafe def main : IO Unit := do
   initSearchPath (← findSysroot)
   enableInitializersExecution
   let source ← (← IO.getStdin).readToEnd
+  let verbatim ← commandIndices "LEANWISP_VERBATIM"
+  let lines ← commandIndices "LEANWISP_LINES"
   let ctx := Parser.mkInputContext source "input.lean"
   let (header, ps, messages) ← Parser.parseHeader ctx
   if messages.hasErrors then throw (IO.userError "invalid module header")
@@ -170,9 +488,21 @@ unsafe def main : IO Unit := do
   let env ← importModules (level := level) (loadExts := true) (Elab.headerToImports header) {} 0
   let (headerFmt, _) ← (PrettyPrinter.format Parser.Module.header.formatter (withoutTrivia header)).toIO
     { fileName := "input.lean", fileMap := ctx.fileMap } { env }
-  let ((commands, docs), _) ← collect.run { inputCtx := ctx } |>.run
+  let (collected, _) ← (collect verbatim (offRegions source) {}).run { inputCtx := ctx } |>.run
     { commandState := Elab.Command.mkState env {} (Options.setBool {} `quotPrecheck false), parserState := ps, cmdPos := ps.pos }
+  let commands := collected.commands
   let stx := mkNode `Lean.Parser.Module.module #[header, mkListNode commands]
-  let fmt := headerFmt ++ Std.Format.joinSep docs.toList (Std.Format.line ++ Std.Format.line)
-  IO.println (Json.mkObj [("Tree", fingerprint stx), ("Document", document (restoreLexemes (lexemes source stx) fmt)),
-    ("Trivia", Json.arr (trivia stx)), ("Tokens", Json.arr (tokens stx)), ("Blocks", Json.arr (blocks stx))]).compress
+  let headerFmt := match header.raw.getTailPos?, commands[0]? with
+    | some tail, some first =>
+      if blankLineBetween (String.Pos.Raw.extract source tail (first.getPos?.getD tail)) then headerFmt
+      else dropLastBreak headerFmt
+    | _, _ => headerFmt
+  let lexemes := lexemes source stx
+  let lengths := lexemes.foldl (init := {}) fun acc (tag, raw) =>
+    acc.insert (tag - lexemeTagBase) raw.utf8ByteSize
+  let docs := collected.docs.mapIdx fun i doc => applyLayoutMarks source lengths (lines.contains i) doc
+  let fmt := headerFmt ++ joinCommands source commands docs
+  IO.println (Json.mkObj [("Tree", fingerprint stx), ("Document", document (restoreLexemes (Std.HashMap.ofList lexemes.toList) fmt)),
+    ("Trivia", Json.arr (trivia stx)), ("Tokens", Json.arr (tokens stx)), ("Blocks", Json.arr (blocks stx)),
+    ("Commands", Json.arr (commands.map commandRange)), ("Kept", Json.arr collected.kept),
+    ("Lines", toJson (lines.filter (· < commands.size)))]).compress

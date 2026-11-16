@@ -1,4 +1,4 @@
-use leanwisp::format_source;
+use leanwisp::{format_document, format_source};
 
 fn stable(source: &str, width: usize) -> String {
     let result = format_source(source, width).unwrap();
@@ -6,17 +6,20 @@ fn stable(source: &str, width: usize) -> String {
     result
 }
 
+fn unchanged(source: &str) {
+    assert_eq!(stable(source, 100), source);
+}
+
 #[test]
 fn declaration_layout() {
     let result = stable(
-        "import Std\ndef double(n:Nat):Nat:=n+n\ndef answer:Nat:=42\n",
+        "import Std\ndef double(n:Nat):Nat:=n+n\n\n\n\ndef answer:Nat:=42\ndef next:Nat:=43\n",
         100,
     );
-    assert!(
-        result.contains("def double (n : Nat) : Nat :=\n  n + n"),
-        "{result}"
+    assert_eq!(
+        result,
+        "import Std\ndef double (n : Nat) : Nat := n + n\n\ndef answer : Nat := 42\ndef next : Nat := 43\n"
     );
-    assert!(result.contains("\n\ndef answer"), "{result}");
 }
 
 #[test]
@@ -86,8 +89,8 @@ fn invalid_input_is_rejected() {
 #[test]
 fn canonical_golden() {
     assert_eq!(
-        stable("def double(n:Nat):Nat:=n+n\ndef answer:Nat:=42", 100),
-        "def double (n : Nat) : Nat :=\n  n + n\n\ndef answer : Nat :=\n  42\n"
+        stable("def double(n:Nat):Nat:=n+n\ndef answer:Nat:=\n  42", 100),
+        "def double (n : Nat) : Nat := n + n\ndef answer : Nat :=\n  42\n"
     );
 }
 
@@ -235,7 +238,11 @@ fn proof_and_comment_golden() {
 
 #[test]
 fn formatter_adapter_source() {
-    stable(include_str!("../lean/Format.lean"), 100);
+    let source = include_str!("../lean/Format.lean");
+    let first = format_document(source, 100, None).unwrap();
+    assert!(first.kept.iter().all(|k| !k.verbatim), "{:?}", first.kept);
+    let second = format_document(&first.source, 100, None).unwrap();
+    assert_eq!(second.source, first.source);
 }
 
 #[test]
@@ -335,4 +342,107 @@ fn preserve_ascii_operator_spelling() {
     let result = stable("#check (3>=2)\n#check (2<=3)\n", 80);
     assert!(result.contains("3 >= 2"), "{result}");
     assert!(result.contains("2 <= 3"), "{result}");
+}
+
+#[test]
+fn source_line_breaks_are_kept() {
+    unchanged(
+        "theorem foo (h : 1 < 2) :\n    1 < 2 := by\n  exact h\n\ntheorem bar (a b : Nat) : a + b = b + a :=\n  Nat.add_comm a b\n\ndef id' (n : Nat) : Nat :=\n  (fun x ↦ x) n\n",
+    );
+    unchanged("example (p : Prop) (hp : p) : p ∧ p := by\n  constructor <;>\n  exact hp\n");
+}
+
+#[test]
+fn attributes_and_where_follow_the_source() {
+    unchanged("@[simp] theorem one : 1 = 1 := rfl\n\n@[simp]\ntheorem two : 2 = 2 := rfl\n");
+    let result = stable(
+        "structure Point where\n  x : Nat\n  y : Nat\ninstance : Inhabited Point\n    where\n  default := ⟨0, 0⟩\n",
+        100,
+    );
+    assert!(
+        result.contains("instance : Inhabited Point where\n  default := ⟨0, 0⟩"),
+        "{result}"
+    );
+}
+
+#[test]
+fn declarations_blocks_and_chains() {
+    unchanged(
+        "def f (k : Nat) (args : Array Nat) : Array Nat :=\n  if k == 1 then\n    args\n  else if k == 2 then\n    let (a, b) := (args[0]!, args[1]!)\n    #[a, b]\n  else args\n",
+    );
+    unchanged("def g (n : Nat) : Nat := Id.run do\n  let mut x := n\n  x := x + 1\n  return x\n");
+    unchanged("inductive Color where\n  | red\n  | green\n  deriving Repr\n");
+    unchanged("def empty : List Nat := {}\n");
+}
+
+#[test]
+fn unsupported_and_disabled_commands_keep_their_source() {
+    let source = "import Lean\nsyntax \"twice! \" term : term\nmacro_rules\n  | `(twice! $x) => `($x  +  $x)\ndef a:Nat:=twice! 3\n-- leanwisp: off\ndef   keep  :  Nat:=1\n-- leanwisp: on\ndef b:Nat:=2\n";
+    let result = format_document(source, 100, None).unwrap();
+    assert!(result.source.contains("`($x  +  $x)"), "{}", result.source);
+    assert!(
+        result.source.contains("def a : Nat := twice! 3"),
+        "{}",
+        result.source
+    );
+    assert!(
+        result.source.contains("def   keep  :  Nat:=1"),
+        "{}",
+        result.source
+    );
+    assert!(
+        result.source.contains("def b : Nat := 2"),
+        "{}",
+        result.source
+    );
+    let lines: Vec<_> = result.kept.iter().map(|k| (k.line, k.verbatim)).collect();
+    assert_eq!(lines, vec![(3, true), (7, true)], "{:?}", result.kept);
+    assert_eq!(
+        format_document(&result.source, 100, None).unwrap().source,
+        result.source
+    );
+}
+
+#[test]
+fn cli_formats_paths_with_project_config() {
+    use std::process::Command;
+    let dir = std::env::temp_dir().join(format!("leanwisp-paths-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src/.hidden")).unwrap();
+    std::fs::write(dir.join("leanwisp.toml"), "line-width = 40\n").unwrap();
+    let long = "def values : List Nat := [111111, 222222, 333333, 444444]\n";
+    std::fs::write(dir.join("src/A.lean"), long).unwrap();
+    std::fs::write(dir.join("src/B.lean"), "def b : Nat := 2\n").unwrap();
+    std::fs::write(dir.join("src/.hidden/C.lean"), "def   c:Nat:=3\n").unwrap();
+    let binary = env!("CARGO_BIN_EXE_leanwisp");
+    let check = Command::new(binary)
+        .args(["source", "check-source", "--paths"])
+        .arg(dir.join("src"))
+        .output()
+        .unwrap();
+    assert_eq!(check.status.code(), Some(254));
+    let report: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+    let files = report["Files"].as_array().unwrap();
+    assert_eq!(files.len(), 2, "{report}");
+    assert_eq!(files[0]["Changed"], true, "{report}");
+    assert_eq!(files[1]["Changed"], false, "{report}");
+    let write = Command::new(binary)
+        .args(["source", "format-source", "--write", "--paths"])
+        .arg(dir.join("src"))
+        .output()
+        .unwrap();
+    assert!(
+        write.status.success(),
+        "{}",
+        String::from_utf8_lossy(&write.stderr)
+    );
+    let formatted = std::fs::read_to_string(dir.join("src/A.lean")).unwrap();
+    assert!(
+        formatted.lines().all(|l| l.chars().count() <= 40),
+        "{formatted}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("src/.hidden/C.lean")).unwrap(),
+        "def   c:Nat:=3\n"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
 }

@@ -3,6 +3,7 @@
 
 import argparse
 import concurrent.futures
+import difflib
 import hashlib
 import json
 import os
@@ -140,6 +141,14 @@ def work(path):
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(formatted)
         result["Changed"] = data["Changed"]
+        result["Kept"] = data["Kept"]
+        result["ChangedLines"] = sum(
+            line[:1] in "+-" and line[:3] not in ("+++", "---")
+            for line in difflib.unified_diff(
+                before.decode().splitlines(), formatted.splitlines(), lineterm="", n=0
+            )
+            if not line.startswith("@@")
+        )
         result["Compile"] = call(
             ["lake", "env", "lean", "--root=" + str(OUT / "formatted"), str(dest)]
         )
@@ -177,6 +186,8 @@ def work(path):
                 "Format": proc["Code"],
                 "Compile": result.get("Compile", {}).get("Code"),
                 "Idempotent": result.get("Idempotent"),
+                "ChangedLines": result.get("ChangedLines"),
+                "Kept": len(result.get("Kept", [])),
             },
             ensure_ascii=False,
         ),
@@ -196,6 +207,9 @@ print(
             "FormatOK": sum(x["Format"]["Code"] == 0 for x in results),
             "CompileOK": sum(x.get("Compile", {}).get("Code") == 0 for x in results),
             "Unchanged": all(x["OriginalUnchanged"] for x in results),
+            "ChangedLines": sum(x.get("ChangedLines", 0) for x in results),
+            "SourceLines": sum(x.get("LinesBefore", 0) for x in results),
+            "KeptCommands": sum(len(x.get("Kept", [])) for x in results),
         }
     ),
     flush=True,
@@ -208,6 +222,7 @@ raise SystemExit(
         and x["Format"]["Code"] == 0
         and x.get("Compile", {}).get("Code") == 0
         and x.get("Idempotent")
+        and not x.get("Kept")
         and x["OriginalUnchanged"]
         for x in results
     )
