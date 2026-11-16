@@ -285,6 +285,9 @@ def layoutReplacements (source : String) (lengths : Std.HashMap Nat Nat) (conser
   let breakAt (before after : Token) : Std.Format :=
     let delta := lineIndent bytes after.pos - lineIndent bytes before.pos
     .tag (breakTagBase + (64 + min 4 (max (-64) delta)).toNat) (.text "\n")
+  let blockAt (before after : Token) : Std.Format :=
+    let delta := lineIndent bytes after.pos - lineIndent bytes before.pos
+    .tag (blockBreakTag + (64 + min 4 (max (-64) delta)).toNat) (.text "\n")
   for i in [1:tokens.size] do
     let (before, after) := (tokens[i - 1]!, tokens[i]!)
     if text before == "{" && text after == "}" && before.pos + 1 == after.pos then
@@ -298,14 +301,19 @@ def layoutReplacements (source : String) (lengths : Std.HashMap Nat Nat) (conser
       let (before, after) := (tokens[i - 1]!, tokens[i]!)
       let range := (List.range (after.leaf - before.leaf)).map (before.leaf + ·)
       let breaks := range.filter fun j => leaves[j]! matches .line || isHardBreak leaves[j]!
-      let chosen := if breakBetween before after then breaks.getLast? else breaks.head?
+      let aligns := range.filter fun j => leaves[j]! matches .align _
+      let chosen := if !breakBetween before after then breaks.head?
+        else if (text before == "by" || text before == "do") && !aligns.isEmpty then aligns.head?
+        else breaks.getLast?
       for j in range do
-        if leaves[j]! matches .align _ then result := result.insert j .nil
+        if leaves[j]! matches .align _ && some j != chosen then result := result.insert j .nil
       let mut spaced := false
       for j in range do
-        if breaks.contains j then
+        if breaks.contains j || some j == chosen then
           result := result.insert j (if breakBetween before after then
-              (if some j == chosen then breakAt before after else .nil)
+              (if some j != chosen then .text " "
+                else if text before == "by" || text before == "do" then blockAt before after
+                else breakAt before after)
             else if spaced then .nil else .text " ")
           spaced := true
         else if !(isSpace leaves[j]! || isBlank leaves[j]!) then spaced := false
@@ -349,8 +357,7 @@ def layoutReplacements (source : String) (lengths : Std.HashMap Nat Nat) (conser
     if text before == "by" || text before == "do" then
       if let some j := range.find? (fun j => leaves[j]! matches .align _ || leaves[j]! matches .line || isHardBreak leaves[j]!) then
         if !result.contains j && !decided.contains j then
-          let delta := lineIndent bytes after.pos - lineIndent bytes before.pos
-          result := result.insert j (.tag (blockBreakTag + (64 + min 4 (max (-64) delta)).toNat) (.text "\n"))
+          result := result.insert j (blockAt before after)
           continue
     if range.any (fun j => isHardBreak leaves[j]! || result.contains j || decided.contains j) then
       continue

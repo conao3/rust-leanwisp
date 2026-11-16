@@ -826,7 +826,7 @@ pub fn format_document(
                         verbatim: true,
                     })
                     .collect();
-                for index in &original.lines {
+                for index in original.lines.iter().filter(|i| !keep.verbatim.contains(i)) {
                     if let Some(range) = original.commands.get(*index) {
                         kept.push(Kept {
                             line: line_of(range[0]),
