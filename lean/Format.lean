@@ -387,15 +387,13 @@ def offRegions (source : String) : Array (Nat × Nat) := Id.run do
   if let some s := start then regions := regions.push (s, source.utf8ByteSize + 1)
   return regions
 
-structure Collected where
-  commands : Array Syntax := #[]
-  docs : Array Std.Format := #[]
-  kept : Array Json := #[]
-  index : Nat := 0
+structure Parsed where
+  command : Syntax
+  env : Environment
+  scope : Elab.Command.Scope
 
 open Elab Frontend in
-partial def collect (memo : IO.Ref (Std.HashMap String (Except String Std.Format))) (formatting : Bool) (verbatim : Array Nat) (off : Array (Nat × Nat)) (acc : Collected) :
-    FrontendM Collected := do
+partial def collect (acc : Array Parsed) : FrontendM (Array Parsed) := do
   let ctx ← getInputContext
   let cs ← getCommandState
   let ps ← getParserState
@@ -408,32 +406,58 @@ partial def collect (memo : IO.Ref (Std.HashMap String (Except String Std.Format
   if messages.hasErrors then
     let texts ← messages.toList.mapM (·.toString)
     throw (IO.userError (String.intercalate "\n" texts ++ "\ninvalid Lean syntax"))
-  let start := (cmd.getPos?.getD 0).byteIdx
-  let original := Std.Format.text (String.Pos.Raw.extract ctx.inputString
-    (cmd.getPos?.getD 0) (cmd.getTailPos?.getD 0))
-  let keep (reason : String) : Collected × Std.Format :=
-    ({ acc with kept := acc.kept.push (Json.arr #[toJson acc.index, toJson start, toJson reason]) },
-      original)
-  let (acc, fmt) ← if !formatting then pure (acc, .nil)
-    else if cmd.isOfKind `Lean.Parser.Command.moduleDoc then pure (acc, original)
-    else if verbatim.contains acc.index then pure (keep "requested")
-    else if off.any (fun (a, b) => a <= start && start < b) then pure (keep "disabled")
-    else
-      let result ← runCommandElabM do
-        try
-          return Except.ok (← Command.liftCoreM <|
-            PrettyPrinter.formatCategory `command (withoutTrivia cmd))
-        catch ex => return Except.error (← ex.toMessageData.toString)
-      match result with
-      | .ok fmt => pure (acc, flattenElseIf fmt)
-      | .error message => pure (keep message)
-  let acc := { acc with
-    commands := acc.commands.push cmd, docs := acc.docs.push fmt, index := acc.index + 1 }
+  let acc := acc.push { command := cmd, env := cs.env, scope }
   if cmd.isOfKind `Lean.Parser.Command.eoi then return acc
   if changesParser cmd then
     elabCommandAtFrontend (parserCommand cmd)
     modify fun st => { st with commandState := { st.commandState with messages := {} } }
-  collect memo formatting verbatim off acc
+  collect acc
+
+def formatCommand (ctx : Parser.InputContext) (parsed : Parsed) : IO (Except String Std.Format) := do
+  let core : Core.Context := {
+    fileName := ctx.fileName, fileMap := ctx.fileMap, options := parsed.scope.opts,
+    currNamespace := parsed.scope.currNamespace, openDecls := parsed.scope.openDecls }
+  try
+    let (fmt, _) ← (PrettyPrinter.formatCategory `command (withoutTrivia parsed.command)).toIO
+      core { env := parsed.env }
+    return .ok (flattenElseIf fmt)
+  catch ex => return .error ex.toString
+
+def formatCommands (memo : IO.Ref (Std.HashMap String (Except String Std.Format)))
+    (ctx : Parser.InputContext) (verbatim : Array Nat) (off : Array (Nat × Nat))
+    (parsed : Array Parsed) : IO (Array Std.Format × Array Json) := do
+  let mut jobs : Array (String × Std.Format × Option (Task (Except IO.Error (Except String Std.Format)))) := #[]
+  for p in parsed, i in [0:parsed.size] do
+    let cmd := p.command
+    let start := (cmd.getPos?.getD 0).byteIdx
+    let text := String.Pos.Raw.extract ctx.inputString (cmd.getPos?.getD 0) (cmd.getTailPos?.getD 0)
+    let original := Std.Format.text text
+    let key := s!"{start}:{text}"
+    if cmd.isOfKind `Lean.Parser.Command.moduleDoc then jobs := jobs.push ("", original, none)
+    else if verbatim.contains i then jobs := jobs.push ("requested", original, none)
+    else if off.any (fun (a, b) => a <= start && start < b) then jobs := jobs.push ("disabled", original, none)
+    else if let some result := (← memo.get).get? key then
+      jobs := jobs.push (key, original, some (.pure (.ok result)))
+    else
+      jobs := jobs.push (key, original, some (← IO.asTask (formatCommand ctx p)))
+  let mut docs := #[]
+  let mut kept := #[]
+  for (key, original, job) in jobs, p in parsed, i in [0:jobs.size] do
+    let start := (p.command.getPos?.getD 0).byteIdx
+    let keepIt (reason : String) := Json.arr #[toJson i, toJson start, toJson reason]
+    match job with
+    | none =>
+      docs := docs.push original
+      if !key.isEmpty then kept := kept.push (keepIt key)
+    | some task =>
+      let result ← IO.ofExcept (← IO.wait task)
+      memo.modify (·.insert key result)
+      match result with
+      | .ok fmt => docs := docs.push fmt
+      | .error message =>
+        docs := docs.push original
+        kept := kept.push (keepIt message)
+  return (docs, kept)
 
 def joinCommands (source : String) (commands : Array Syntax) (docs : Array Std.Format) :
     Std.Format := Id.run do
@@ -478,9 +502,11 @@ unsafe def formatRequest (cache : IO.Ref (Option (String × Environment)))
       pure env
   let (headerFmt, _) ← (PrettyPrinter.format Parser.Module.header.formatter (withoutTrivia header)).toIO
     { fileName := "input.lean", fileMap := ctx.fileMap } { env }
-  let (collected, _) ← (collect memo req.document req.verbatim (offRegions source) {}).run { inputCtx := ctx } |>.run
+  let (parsed, _) ← (collect #[]).run { inputCtx := ctx } |>.run
     { commandState := Elab.Command.mkState env {} (Options.setBool {} `quotPrecheck false), parserState := ps, cmdPos := ps.pos }
-  let commands := collected.commands
+  let commands := parsed.map (·.command)
+  let (docs, kept) ← if req.document then formatCommands memo ctx req.verbatim (offRegions source) parsed
+    else pure (#[], #[])
   let stx := mkNode `Lean.Parser.Module.module #[header, mkListNode commands]
   let headerFmt := match header.raw.getTailPos?, commands[0]? with
     | some tail, some first =>
@@ -491,12 +517,12 @@ unsafe def formatRequest (cache : IO.Ref (Option (String × Environment)))
   let lengths := lexemes.foldl (init := {}) fun acc (tag, raw) =>
     acc.insert (tag - lexemeTagBase) raw.utf8ByteSize
   let document := if !req.document then Json.arr #[toJson "nil"] else
-    let docs := collected.docs.mapIdx fun i doc => applyLayoutMarks source lengths (req.lines.contains i) doc
+    let docs := docs.mapIdx fun i doc => applyLayoutMarks source lengths (req.lines.contains i) doc
     let fmt := headerFmt ++ joinCommands source commands docs
     document (restoreLexemes (Std.HashMap.ofList lexemes.toList) fmt)
   return Json.mkObj [("Tree", fingerprint stx), ("Document", document),
     ("Trivia", Json.arr (trivia stx)), ("Tokens", Json.arr (tokens stx)), ("Blocks", Json.arr (blocks stx)),
-    ("Commands", Json.arr (commands.map commandRange)), ("Kept", Json.arr collected.kept),
+    ("Commands", Json.arr (commands.map commandRange)), ("Kept", Json.arr kept),
     ("Lines", toJson (req.lines.filter (· < commands.size)))]
 
 unsafe def main : IO Unit := do

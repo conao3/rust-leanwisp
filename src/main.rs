@@ -66,9 +66,14 @@ struct Options {
     /// Lake project to load imports from (default: found upward from the input).
     #[arg(long)]
     project_dir: Option<PathBuf>,
-    /// Files formatted in parallel with --paths.
-    #[arg(long, default_value_t = 4)]
-    jobs: usize,
+    /// Files formatted in parallel with --paths (default: the number of CPUs).
+    #[arg(long)]
+    jobs: Option<usize>,
+    /// Reuse results for unchanged inputs from the cache directory.
+    #[arg(long, overrides_with = "no_cache")]
+    cache: bool,
+    #[arg(long, overrides_with = "cache")]
+    no_cache: bool,
 }
 
 #[derive(Deserialize)]
@@ -119,7 +124,125 @@ fn format_text(
         .project_dir
         .clone()
         .or_else(|| find_upward(start, &["lakefile.toml", "lakefile.lean"]));
-    leanwisp::format_document(source, line_width(opts, start)?, project.as_deref())
+    let width = line_width(opts, start)?;
+    let key = (!opts.no_cache)
+        .then(|| cache_key(source, width, project.as_deref()))
+        .flatten();
+    if let Some(entry) = key.as_ref().and_then(|k| std::fs::read(k).ok())
+        && let Ok(formatted) = serde_json::from_slice::<leanwisp::Formatted>(&entry)
+    {
+        return Ok(formatted);
+    }
+    let formatted = leanwisp::format_document(source, width, project.as_deref())?;
+    if let Some(key) = key
+        && let Some(dir) = key.parent()
+        && std::fs::create_dir_all(dir).is_ok()
+    {
+        let temporary = key.with_extension(format!("tmp{}", std::process::id()));
+        if std::fs::write(
+            &temporary,
+            serde_json::to_vec(&formatted).unwrap_or_default(),
+        )
+        .is_ok()
+        {
+            let _ = std::fs::rename(&temporary, &key);
+        }
+    }
+    Ok(formatted)
+}
+
+fn fnv(hash: &mut u64, bytes: &[u8]) {
+    for byte in bytes {
+        *hash ^= u64::from(*byte);
+        *hash = hash.wrapping_mul(0x100000001b3);
+    }
+    *hash ^= 0xff;
+    *hash = hash.wrapping_mul(0x100000001b3);
+}
+
+fn imported_modules(source: &str) -> Option<Vec<String>> {
+    let mut modules = Vec::new();
+    let mut lines = source.lines();
+    while let Some(line) = lines.next() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("--") || line == "module" || line == "prelude" {
+            continue;
+        }
+        if line.starts_with("/-") {
+            let mut text = line.to_owned();
+            while !text.contains("-/") {
+                text = lines.next()?.to_owned();
+            }
+            continue;
+        }
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let Some(position) = words.iter().position(|w| *w == "import") else {
+            break;
+        };
+        if !words[..position]
+            .iter()
+            .all(|w| matches!(*w, "public" | "meta" | "private"))
+        {
+            break;
+        }
+        modules.extend(
+            words[position + 1..]
+                .iter()
+                .filter(|w| **w != "all")
+                .map(|w| w.to_string()),
+        );
+    }
+    Some(modules)
+}
+
+fn cache_key(source: &str, width: usize, project: Option<&Path>) -> Option<PathBuf> {
+    let root = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?
+        .join("leanwisp");
+    let mut hash = 0xcbf29ce484222325u64;
+    fnv(&mut hash, env!("CARGO_PKG_VERSION").as_bytes());
+    fnv(
+        &mut hash,
+        std::env::var("LEANWISP_SYNTAX")
+            .unwrap_or_default()
+            .as_bytes(),
+    );
+    fnv(&mut hash, &width.to_le_bytes());
+    fnv(&mut hash, source.as_bytes());
+    let search = match project {
+        Some(dir) => {
+            let output = std::process::Command::new("lake")
+                .args(["env", "printenv", "LEAN_PATH"])
+                .current_dir(dir)
+                .output()
+                .ok()?;
+            String::from_utf8(output.stdout).ok()?
+        }
+        None => std::env::var("LEAN_PATH").unwrap_or_default(),
+    };
+    for module in imported_modules(source)? {
+        let relative: PathBuf = module
+            .split('.')
+            .collect::<PathBuf>()
+            .with_extension("olean");
+        fnv(&mut hash, module.as_bytes());
+        for dir in search.trim().split(':').filter(|d| !d.is_empty()) {
+            let path = Path::new(dir).join(&relative);
+            if let Ok(meta) = std::fs::metadata(&path) {
+                fnv(&mut hash, path.as_os_str().as_encoded_bytes());
+                fnv(&mut hash, &meta.len().to_le_bytes());
+                let modified = meta
+                    .modified()
+                    .ok()?
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .ok()?;
+                fnv(&mut hash, &modified.as_nanos().to_le_bytes());
+                break;
+            }
+        }
+    }
+    Some(root.join(format!("{hash:016x}.json")))
 }
 
 fn format_file(opts: &Options, path: &Path) -> Report {
@@ -191,7 +314,12 @@ fn run_paths(opts: &Options, paths: &[PathBuf]) -> Result<Vec<Report>, String> {
     let next = std::sync::atomic::AtomicUsize::new(0);
     let reports = std::sync::Mutex::new(Vec::new());
     std::thread::scope(|scope| {
-        for _ in 0..opts.jobs.clamp(1, 64).min(files.len().max(1)) {
+        for _ in 0..opts
+            .jobs
+            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, usize::from))
+            .clamp(1, 64)
+            .min(files.len().max(1))
+        {
             scope.spawn(|| {
                 loop {
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

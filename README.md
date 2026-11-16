@@ -103,7 +103,26 @@ line-width = 100
 ```
 
 `--paths` takes files and directories. Directories are searched for `.lean`
-files, skipping names starting with `.` (such as `.lake`) and symlinks.
+files, skipping names starting with `.` (such as `.lake`) and symlinks. Files are
+formatted in parallel, one per CPU unless `--jobs N` is given.
+
+## Speed
+
+Each file uses one Lean process: its imports load once, and every validation
+parse of that file is served by the same process. Commands are formatted in
+parallel, and parses whose layout is not needed skip formatting. Results are
+cached in `$XDG_CACHE_HOME/leanwisp` (default `~/.cache/leanwisp`), keyed by the
+source, the line width, the Leanwisp build and the `.olean` files of the imported
+modules, so an unchanged file is not parsed again. `--no-cache` disables the
+cache; `--debug` prints parse and render times.
+
+On the 31-file Mathlib sample in [docs/mathlib-evaluation.md](docs/mathlib-evaluation.md)
+(6 CPUs, `check-source --paths`):
+
+| | Uncached | Cached |
+|---|---:|---:|
+| Leanwisp | 8.8 s | 0.3 s |
+| [lean-fmt](https://github.com/jcreinhold/lean-fmt) `57c2390` (`format --check`) | 31.6 s | 20.3 s |
 
 ## CLI
 

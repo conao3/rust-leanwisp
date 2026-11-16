@@ -497,3 +497,41 @@ fn cli_formats_paths_with_project_config() {
     );
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn cli_reuses_cached_results() {
+    use std::process::Command;
+    let dir = std::env::temp_dir().join(format!("leanwisp-cache-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("Cached.lean");
+    std::fs::write(&file, "def cached:Nat:=1\n").unwrap();
+    let binary = env!("CARGO_BIN_EXE_leanwisp");
+    let run = |args: &[&str]| {
+        let output = Command::new(binary)
+            .env("XDG_CACHE_HOME", dir.join("cache"))
+            .args(["--output", "text", "source", "format-source", "--file"])
+            .arg(&file)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let first = run(&[]);
+    assert_eq!(first, "def cached : Nat := 1\n");
+    assert_eq!(
+        std::fs::read_dir(dir.join("cache/leanwisp"))
+            .unwrap()
+            .count(),
+        1
+    );
+    assert_eq!(run(&[]), first);
+    assert_eq!(run(&["--no-cache"]), first);
+    std::fs::write(&file, "def cached:Nat:=2\n").unwrap();
+    assert_eq!(run(&[]), "def cached : Nat := 2\n");
+    std::fs::remove_dir_all(dir).unwrap();
+}

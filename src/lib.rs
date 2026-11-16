@@ -624,21 +624,26 @@ fn layout_blocks(source: &str, parsed: &Parsed, rendered: String) -> String {
 
 // Comments belong to gaps between source tokens, not formatter nesting groups.
 // Preserve comment-bearing gaps, adjusting only indentation of the next token.
-fn restore_comments(source: &str, original: &Parsed, rendered: &str, clean: &Parsed) -> String {
+fn restore_comments(
+    source: &str,
+    original: &[[usize; 2]],
+    rendered: &str,
+    clean: &[[usize; 2]],
+) -> String {
     restore_comments_shifted(source, original, rendered, clean, &mut [])
 }
 
 fn restore_comments_shifted(
     source: &str,
-    original: &Parsed,
+    original: &[[usize; 2]],
     rendered: &str,
-    clean: &Parsed,
+    clean: &[[usize; 2]],
     offsets: &mut [usize],
 ) -> String {
     let mut edits = Vec::new();
     let mut old_end = 0;
     let mut new_end = 0;
-    for (old, new) in original.tokens.iter().zip(&clean.tokens) {
+    for (old, new) in original.iter().zip(clean) {
         let gap = &source[old_end..old[0]];
         if !comments(&[gap.to_owned()]).is_empty() {
             let gap = if let Some((body, _)) = gap.rsplit_once('\n') {
@@ -686,14 +691,14 @@ struct Keep {
     lines: Vec<usize>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, Deserialize)]
 pub struct Kept {
     pub line: usize,
     pub reason: String,
     pub verbatim: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, Deserialize)]
 pub struct Formatted {
     pub source: String,
     pub kept: Vec<Kept>,
@@ -701,6 +706,7 @@ pub struct Formatted {
 
 enum Failure {
     Command(usize, String),
+    Commands(Vec<usize>, String),
     Fatal(String),
 }
 
@@ -714,6 +720,12 @@ fn command_trees(tree: &Value) -> &[Value] {
 
 fn tree_difference(original: &Parsed, other: &Parsed, reason: &str) -> Failure {
     let (a, b) = (command_trees(&original.tree), command_trees(&other.tree));
+    if a.len() == b.len() && !a.is_empty() {
+        let all: Vec<usize> = (0..a.len()).filter(|&i| a[i] != b[i]).collect();
+        if !all.is_empty() {
+            return Failure::Commands(all, reason.into());
+        }
+    }
     match (0..a.len().min(b.len())).find(|&i| a[i] != b[i]) {
         Some(i) => Failure::Command(i, reason.into()),
         None if a.len() != b.len() && !a.is_empty() && !b.is_empty() => {
@@ -795,16 +807,23 @@ fn attempt(
     let rendered = layout_blocks(source, &original, rendered);
     let marks_rendered = marks.clone();
     let starts = Some(marks);
-    let clean = reparse(adapter, &rendered, starts, keep, false)?;
-    if original.tree != clean.tree || original.tokens.len() != clean.tokens.len() {
-        return Err(tree_difference(
-            &original,
-            &clean,
-            "formatting would change the Lean syntax tree",
-        ));
-    }
+    let clean = match token_positions(source, &original, &rendered) {
+        Some(tokens) => tokens,
+        None => {
+            let clean = reparse(adapter, &rendered, starts, keep, false)?;
+            if original.tree != clean.tree || original.tokens.len() != clean.tokens.len() {
+                return Err(tree_difference(
+                    &original,
+                    &clean,
+                    "formatting would change the Lean syntax tree",
+                ));
+            }
+            clean.tokens
+        }
+    };
     let mut starts = marks_rendered;
-    let formatted = restore_comments_shifted(source, &original, &rendered, &clean, &mut starts);
+    let formatted =
+        restore_comments_shifted(source, &original.tokens, &rendered, &clean, &mut starts);
     let starts = Some(starts);
     let checked = reparse(adapter, &formatted, starts, keep, true)?;
     if original.tree != checked.tree || original.tokens.len() != checked.tokens.len() {
@@ -830,15 +849,21 @@ fn attempt(
     let (next, marks) = render_marked(&checked.document, width);
     let next = layout_blocks(&formatted, &checked, next);
     let starts = Some(marks);
-    let next_clean = reparse(adapter, &next, starts, keep, false)?;
-    if checked.tree != next_clean.tree || checked.tokens.len() != next_clean.tokens.len() {
-        return Err(tree_difference(
-            &checked,
-            &next_clean,
-            "formatter did not reach a stable layout",
-        ));
-    }
-    let settled = restore_comments(&formatted, &checked, &next, &next_clean);
+    let next_clean = match token_positions(&formatted, &checked, &next) {
+        Some(tokens) => tokens,
+        None => {
+            let next_clean = reparse(adapter, &next, starts, keep, false)?;
+            if checked.tree != next_clean.tree || checked.tokens.len() != next_clean.tokens.len() {
+                return Err(tree_difference(
+                    &checked,
+                    &next_clean,
+                    "formatter did not reach a stable layout",
+                ));
+            }
+            next_clean.tokens
+        }
+    };
+    let settled = restore_comments(&formatted, &checked.tokens, &next, &next_clean);
     if settled != formatted {
         let offset = formatted
             .bytes()
@@ -871,6 +896,27 @@ pub fn format_source_in(
             kept.line, kept.reason
         )),
     }
+}
+
+fn escalate(
+    keep: &mut Keep,
+    reasons: &mut std::collections::HashMap<usize, String>,
+    indices: &[usize],
+    reason: String,
+) -> Result<(), String> {
+    for &index in indices {
+        trace(|| format!("command {index}: {reason}"));
+        if keep.verbatim.contains(&index) {
+            return Err(format!("{reason}; input unchanged"));
+        }
+        if keep.lines.contains(&index) {
+            keep.verbatim.push(index);
+        } else {
+            keep.lines.push(index);
+            reasons.insert(index, reason.clone());
+        }
+    }
+    Ok(())
 }
 
 pub fn format_document(
@@ -917,16 +963,10 @@ pub fn format_document(
                 });
             }
             Err(Failure::Command(index, reason)) => {
-                trace(|| format!("command {index}: {reason}"));
-                if keep.verbatim.contains(&index) {
-                    return Err(format!("{reason}; input unchanged"));
-                }
-                if keep.lines.contains(&index) {
-                    keep.verbatim.push(index);
-                } else {
-                    keep.lines.push(index);
-                    reasons.insert(index, reason);
-                }
+                escalate(&mut keep, &mut reasons, &[index], reason)?
+            }
+            Err(Failure::Commands(indices, reason)) => {
+                escalate(&mut keep, &mut reasons, &indices, reason)?
             }
             Err(Failure::Fatal(message)) => return Err(message),
         }

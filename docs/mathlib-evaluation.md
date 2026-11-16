@@ -74,3 +74,25 @@ Per-file results, hashes, linter warnings and kept commands are in
 [mathlib-results.json](mathlib-results.json). The check does not prove
 equivalence of source-position-sensitive macros, and Mathlib beyond this sample
 is untested.
+
+## Speed comparison
+
+The same 31 files were copied into one Lake project and checked on helios
+(6 CPUs) with Leanwisp `source check-source --paths Mathlib` and
+[lean-fmt](https://github.com/jcreinhold/lean-fmt) `57c2390` built for Lean
+4.35.0, `lean-fmt format --check <files>`, each with its default parallelism.
+"Uncached" removes `~/.cache/leanwisp` and `.lean-fmt-cache` first; "cached" is
+the immediately following second run.
+
+| | Uncached | Cached |
+|---|---:|---:|
+| Leanwisp | 8.8 s | 0.3 s |
+| lean-fmt | 31.6 s | 20.3 s |
+
+Formatting one file at a time with one lean-fmt worker and no cache:
+
+| File | Leanwisp | lean-fmt |
+|---|---:|---:|
+| `Data/Nat/Basic.lean` | 0.56 s | 0.79 s |
+| `Order/Basic.lean` | 1.83 s | 4.79 s |
+| `Algebra/Group/Basic.lean` | 2.40 s | 6.73 s |
