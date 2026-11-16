@@ -1,0 +1,81 @@
+--- a/Mathlib/Order/Basic.lean
++++ b/Mathlib/Order/Basic.lean
+@@ -57,7 +57,6 @@
+ 
+ @[expose] public section
+ 
+-
+ open Function
+ 
+ variable {ι α β : Type*} {π : ι → Type*}
+@@ -114,7 +113,7 @@
+ 
+ -- Unnecessary brackets are here for readability
+ @[to_dual self]
+-lemma not_lt_iff_le_imp_ge : ¬ a < b ↔ (a ≤ b → b ≤ a) := by
++lemma not_lt_iff_le_imp_ge : ¬a < b ↔ (a ≤ b → b ≤ a) := by
+   simp [not_lt_iff_not_le_or_ge, or_iff_not_imp_left]
+ 
+ @[simp]
+@@ -504,7 +503,6 @@
+ 
+ /-! ### `Compl` -/
+ 
+-
+ instance Prop.instCompl : Compl Prop :=
+   ⟨Not⟩
+ 
+@@ -741,7 +739,7 @@
+   have h := LinearOrder.compare_eq_compareOfLessAndEq (f a) (f b)
+   simp only [h, compareOfLessAndEq]
+   split_ifs <;> try (first | rfl | contradiction)
+-  · have : ¬ f a = f b := by rename_i h; exact inj.ne h
++  · have : ¬f a = f b := by rename_i h; exact inj.ne h
+     contradiction
+   · grind
+ 
+@@ -811,7 +809,6 @@
+ 
+ /-! ### Subtype of an order -/
+ 
+-
+ namespace Subtype
+ 
+ @[simp, gcongr, to_dual self]
+@@ -862,7 +859,6 @@
+ the type synonym `α ×ₗ β = α × β`.
+ -/
+ 
+-
+ namespace Prod
+ section LE
+ variable [LE α] [LE β] {x y : α × β} {a a₁ a₂ : α} {b b₁ b₂ : β}
+@@ -973,7 +969,6 @@
+ theorem exists_between [LT α] [DenselyOrdered α] {a₁ a₂ : α} : a₁ < a₂ → ∃ a, a₁ < a ∧ a < a₂ :=
+   DenselyOrdered.dense _ _
+ 
+-
+ /-- Any ordered subsingleton is densely ordered. Not an instance to avoid a heavy subsingleton
+ typeclass search. -/
+ lemma Subsingleton.instDenselyOrdered {X : Type*} [Subsingleton X] [LT X] :
+@@ -993,13 +988,13 @@
+     DenselyOrdered (∀ i, π i) :=
+   ⟨fun a b ↦ by
+     classical
+-      simp_rw [Pi.lt_def]
+-      rintro ⟨hab, i, hi⟩
+-      obtain ⟨c, ha, hb⟩ := exists_between hi
+-      exact
+-        ⟨Function.update a i c,
+-          ⟨le_update_iff.2 ⟨ha.le, fun _ _ ↦ le_rfl⟩, i, by rwa [update_self]⟩,
+-          update_le_iff.2 ⟨hb.le, fun _ _ ↦ hab _⟩, i, by rwa [update_self]⟩⟩
++    simp_rw [Pi.lt_def]
++    rintro ⟨hab, i, hi⟩
++    obtain ⟨c, ha, hb⟩ := exists_between hi
++    exact
++      ⟨Function.update a i c,
++        ⟨le_update_iff.2 ⟨ha.le, fun _ _ ↦ le_rfl⟩, i, by rwa [update_self]⟩,
++        update_le_iff.2 ⟨hb.le, fun _ _ ↦ hab _⟩, i, by rwa [update_self]⟩⟩
+ 
+ section LinearOrder
+ variable [LinearOrder α] [DenselyOrdered α] {a₁ a₂ : α}
