@@ -52,74 +52,90 @@ fn comments(trivia: &[String]) -> Vec<String> {
     result
 }
 
-fn parse(source: &str, project: Option<&std::path::Path>, keep: &Keep) -> Result<Parsed, String> {
-    let mut command = if let Some(binary) = std::env::var_os("LEANWISP_SYNTAX") {
-        Command::new(binary)
-    } else {
-        let mut cmd = Command::new("lean");
-        cmd.args([
-            "--run",
-            concat!(env!("CARGO_MANIFEST_DIR"), "/lean/Format.lean"),
-        ]);
-        cmd
-    };
-    if let Some(dir) = project {
-        let program = command.get_program().to_owned();
-        let args: Vec<_> = command.get_args().map(|s| s.to_owned()).collect();
-        let mut lake = Command::new("lake");
-        lake.arg("env").arg(program).args(args).current_dir(dir);
-        command = lake;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::process::CommandExt;
-        // Ensure a killed editor/filter does not leave a parser process behind.
-        unsafe {
-            command.pre_exec(|| {
-                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                if libc::getppid() == 1 {
-                    libc::raise(libc::SIGKILL);
-                }
-                Ok(())
-            });
+struct Adapter {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    stdout: std::io::BufReader<std::process::ChildStdout>,
+}
+
+impl Adapter {
+    fn start(project: Option<&std::path::Path>) -> Result<Adapter, String> {
+        let mut command = if let Some(binary) = std::env::var_os("LEANWISP_SYNTAX") {
+            Command::new(binary)
+        } else {
+            let mut cmd = Command::new("lean");
+            cmd.args([
+                "--run",
+                concat!(env!("CARGO_MANIFEST_DIR"), "/lean/Format.lean"),
+            ]);
+            cmd
+        };
+        if let Some(dir) = project {
+            let program = command.get_program().to_owned();
+            let args: Vec<_> = command.get_args().map(|s| s.to_owned()).collect();
+            let mut lake = Command::new("lake");
+            lake.arg("env").arg(program).args(args).current_dir(dir);
+            command = lake;
         }
-    }
-    for (name, list) in [
-        ("LEANWISP_VERBATIM", &keep.verbatim),
-        ("LEANWISP_LINES", &keep.lines),
-    ] {
-        if !list.is_empty() {
-            let list: Vec<String> = list.iter().map(usize::to_string).collect();
-            command.env(name, list.join(","));
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::process::CommandExt;
+            // Ensure a killed editor/filter does not leave a parser process behind.
+            unsafe {
+                command.pre_exec(|| {
+                    if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    if libc::getppid() == 1 {
+                        libc::raise(libc::SIGKILL);
+                    }
+                    Ok(())
+                });
+            }
         }
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("cannot start Lean parser: {e}"))?;
+        let stdin = child.stdin.take().ok_or("missing parser stdin")?;
+        let stdout = std::io::BufReader::new(child.stdout.take().ok_or("missing parser stdout")?);
+        Ok(Adapter {
+            child,
+            stdin,
+            stdout,
+        })
     }
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("cannot start Lean parser: {e}"))?;
-    // Read output concurrently with writing: large documents can exceed pipe capacity.
-    let mut stdin = child.stdin.take().ok_or("missing parser stdin")?;
-    let input = source.to_owned();
-    let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
-    let output = child.wait_with_output().map_err(|e| e.to_string())?;
-    let written = writer.join().map_err(|_| "parser writer panicked")?;
-    if !output.status.success() {
-        return Err(format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    written.map_err(|e| e.to_string())?;
-    {
-        let mut de = serde_json::Deserializer::from_slice(&output.stdout);
+
+    fn parse(&mut self, source: &str, keep: &Keep, document: bool) -> Result<Parsed, String> {
+        use std::io::BufRead;
+        let started = std::time::Instant::now();
+        let request = serde_json::json!({
+            "source": source,
+            "verbatim": keep.verbatim,
+            "lines": keep.lines,
+            "document": document,
+        });
+        writeln!(self.stdin, "{request}").map_err(|e| format!("Lean parser stopped: {e}"))?;
+        self.stdin.flush().map_err(|e| e.to_string())?;
+        let mut line = String::new();
+        let read = self
+            .stdout
+            .read_line(&mut line)
+            .map_err(|e| e.to_string())?;
+        if read == 0 {
+            return Err("Lean parser exited".into());
+        }
+        let mut de = serde_json::Deserializer::from_str(&line);
         de.disable_recursion_limit();
-        let mut parsed =
-            Parsed::deserialize(&mut de).map_err(|e| format!("invalid parser response: {e}"))?;
+        let response =
+            Value::deserialize(&mut de).map_err(|e| format!("invalid parser response: {e}"))?;
+        if let Some(error) = response.get("Error").and_then(Value::as_str) {
+            return Err(error.to_owned());
+        }
+        let mut parsed: Parsed = serde_json::from_value(response)
+            .map_err(|e| format!("invalid parser response: {e}"))?;
         let mut end = 0;
         for [start, stop] in &parsed.tokens {
             if *start < end
@@ -133,7 +149,15 @@ fn parse(source: &str, project: Option<&std::path::Path>, keep: &Keep) -> Result
             end = *stop;
         }
         attach_block_introducers(&mut parsed.document);
+        trace(|| format!("parsed {} bytes in {:.2?}", source.len(), started.elapsed()));
         Ok(parsed)
+    }
+}
+
+impl Drop for Adapter {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -725,12 +749,13 @@ fn error_offset(text: &str, message: &str) -> Option<usize> {
 }
 
 fn reparse(
+    adapter: &mut Adapter,
     text: &str,
     starts: Option<Vec<usize>>,
-    project: Option<&std::path::Path>,
     keep: &Keep,
+    document: bool,
 ) -> Result<Parsed, Failure> {
-    parse(text, project, keep).map_err(|message| {
+    adapter.parse(text, keep, document).map_err(|message| {
         trace(|| {
             let line = error_offset(text, &message).map_or(0, |o| text[..o].matches('\n').count());
             let context: Vec<_> = text.lines().skip(line.saturating_sub(3)).take(6).collect();
@@ -758,17 +783,19 @@ fn command_comments(text: &str, parsed: &Parsed) -> Vec<Vec<String>> {
 }
 
 fn attempt(
+    adapter: &mut Adapter,
     source: &str,
     width: usize,
-    project: Option<&std::path::Path>,
     keep: &Keep,
 ) -> Result<(String, Parsed), Failure> {
-    let original = parse(source, project, keep).map_err(Failure::Fatal)?;
+    let original = adapter.parse(source, keep, true).map_err(Failure::Fatal)?;
+    let started = std::time::Instant::now();
     let (rendered, marks) = render_marked(&original.document, width);
+    trace(|| format!("rendered in {:.2?}", started.elapsed()));
     let rendered = layout_blocks(source, &original, rendered);
     let marks_rendered = marks.clone();
     let starts = Some(marks);
-    let clean = reparse(&rendered, starts, project, keep)?;
+    let clean = reparse(adapter, &rendered, starts, keep, false)?;
     if original.tree != clean.tree || original.tokens.len() != clean.tokens.len() {
         return Err(tree_difference(
             &original,
@@ -779,7 +806,7 @@ fn attempt(
     let mut starts = marks_rendered;
     let formatted = restore_comments_shifted(source, &original, &rendered, &clean, &mut starts);
     let starts = Some(starts);
-    let checked = reparse(&formatted, starts, project, keep)?;
+    let checked = reparse(adapter, &formatted, starts, keep, true)?;
     if original.tree != checked.tree || original.tokens.len() != checked.tokens.len() {
         return Err(tree_difference(
             &original,
@@ -803,7 +830,7 @@ fn attempt(
     let (next, marks) = render_marked(&checked.document, width);
     let next = layout_blocks(&formatted, &checked, next);
     let starts = Some(marks);
-    let next_clean = reparse(&next, starts, project, keep)?;
+    let next_clean = reparse(adapter, &next, starts, keep, false)?;
     if checked.tree != next_clean.tree || checked.tokens.len() != next_clean.tokens.len() {
         return Err(tree_difference(
             &checked,
@@ -854,10 +881,11 @@ pub fn format_document(
     if !(20..=300).contains(&width) {
         return Err("line width must be between 20 and 300".into());
     }
+    let mut adapter = Adapter::start(project)?;
     let mut keep = Keep::default();
     let mut reasons = std::collections::HashMap::new();
     loop {
-        match attempt(source, width, project, &keep) {
+        match attempt(&mut adapter, source, width, &keep) {
             Ok((formatted, original)) => {
                 let line_of =
                     |start: usize| source[..start.min(source.len())].matches('\n').count() + 1;

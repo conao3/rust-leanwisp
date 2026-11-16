@@ -201,6 +201,7 @@ def work(path):
                 "Idempotent": result.get("Idempotent"),
                 "ChangedLines": result.get("ChangedLines"),
                 "Kept": len(result.get("Kept", [])),
+                "FormatSeconds": proc["Seconds"],
                 "LintBefore": len(result["LintBefore"]),
                 "LintAfter": len(result.get("LintAfter", [])),
             },
@@ -225,6 +226,8 @@ print(
             "ChangedLines": sum(x.get("ChangedLines", 0) for x in results),
             "SourceLines": sum(x.get("LinesBefore", 0) for x in results),
             "KeptCommands": sum(len(x.get("Kept", [])) for x in results),
+            "FormatSeconds": round(sum(x["Format"]["Seconds"] for x in results), 2),
+            "CompileSeconds": round(sum(x["Baseline"]["Seconds"] for x in results), 2),
             "LintBefore": sum(len(x["LintBefore"]) for x in results),
             "LintAfter": sum(len(x.get("LintAfter", [])) for x in results),
         }
