@@ -39,6 +39,8 @@
             projectRootFile = "flake.nix";
             programs.nixfmt.enable = true;
             programs.rustfmt.enable = true;
+            programs.ruff-check.enable = true;
+            programs.ruff-format.enable = true;
           };
           devShells.default = pkgs.mkShell {
             packages = [
@@ -49,6 +51,7 @@
               pkgs.rust-analyzer
               pkgs.lean4
               pkgs.gnumake
+              pkgs.python315
             ];
             LEANWISP_SYNTAX = "${syntax}/bin/leanwisp-syntax";
           };

@@ -1,0 +1,60 @@
+--- a/Mathlib/Data/Nat/Basic.lean
++++ b/Mathlib/Data/Nat/Basic.lean
+@@ -30,0 +31 @@
++
+@@ -34 +35,2 @@
+-instance instLinearOrder : LinearOrder ℕ where
++instance instLinearOrder : LinearOrder ℕ
++    where
+@@ -47,2 +49,2 @@
+-instance : Preorder ℕ := inferInstance
+-instance : PartialOrder ℕ := inferInstance
++instance : Preorder ℕ :=
++  inferInstance
+@@ -50 +52,5 @@
+-instance instNontrivial : Nontrivial ℕ := ⟨⟨0, 1, Nat.zero_ne_one⟩⟩
++instance : PartialOrder ℕ :=
++  inferInstance
++
++instance instNontrivial : Nontrivial ℕ :=
++  ⟨⟨0, 1, Nat.zero_ne_one⟩⟩
+@@ -54 +60,2 @@
+-lemma succ_injective : Injective Nat.succ := @succ.inj
++lemma succ_injective : Injective Nat.succ :=
++  @succ.inj
+@@ -71,2 +78 @@
+-protected theorem pow_sub_one {x a : ℕ} (hx : x ≠ 0) (ha : a ≠ 0) :
+-    x ^ (a - 1) = x ^ a / x := by
++protected theorem pow_sub_one {x a : ℕ} (hx : x ≠ 0) (ha : a ≠ 0) : x ^ (a - 1) = x ^ a / x := by
+@@ -107 +112,0 @@
+-
+@@ -114,2 +119 @@
+-lemma set_induction {S : Set ℕ} (hb : 0 ∈ S) (h_ind : ∀ k : ℕ, k ∈ S → k + 1 ∈ S) (n : ℕ) :
+-    n ∈ S :=
++lemma set_induction {S : Set ℕ} (hb : 0 ∈ S) (h_ind : ∀ k : ℕ, k ∈ S → k + 1 ∈ S) (n : ℕ) : n ∈ S :=
+@@ -136,2 +140 @@
+-      refine not_dvd_of_pos_of_lt ?_ ?_ <;>
+-      grind
++      refine not_dvd_of_pos_of_lt ?_ ?_ <;> grind
+@@ -148,2 +151 @@
+-lemma mul_le_pow {a : ℕ} (ha : a ≠ 1) (b : ℕ) :
+-    a * b ≤ a ^ b := by
++lemma mul_le_pow {a : ℕ} (ha : a ≠ 1) (b : ℕ) : a * b ≤ a ^ b := by
+@@ -153,4 +155,4 @@
+-      obtain rfl | ha0 : a = 0 ∨ a > 0 := a.eq_zero_or_pos
+-      · rw [Nat.zero_mul]; exact Nat.zero_le _
+-      · have ha1 : a > 1 := Nat.lt_of_le_of_ne ha0 ha.symm
+-        rw [Nat.pow_succ']; exact Nat.mul_le_mul_left a (Nat.lt_pow_self ha1)
++    obtain rfl | ha0 : a = 0 ∨ a > 0 := a.eq_zero_or_pos
++    · rw [Nat.zero_mul]; exact Nat.zero_le _
++    · have ha1 : a > 1 := Nat.lt_of_le_of_ne ha0 ha.symm
++      rw [Nat.pow_succ']; exact Nat.mul_le_mul_left a (Nat.lt_pow_self ha1)
+@@ -158 +160,3 @@
+-lemma two_mul_sq_add_one_le_two_pow_two_mul (k : ℕ) : 2 * k ^ 2 + 1 ≤ 2 ^ (2 * k) := by
++lemma two_mul_sq_add_one_le_two_pow_two_mul (k : ℕ) :
++    2 * k ^ 2 + 1 ≤
++      2 ^ (2 * k) := by
+@@ -162 +166,2 @@
+-    calc 2 * k ^ 2
++    calc
++      2 * k ^ 2

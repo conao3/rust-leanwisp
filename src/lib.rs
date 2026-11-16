@@ -9,6 +9,8 @@ struct Parsed {
     tree: Value,
     document: Value,
     trivia: Vec<String>,
+    tokens: Vec<[usize; 2]>,
+    blocks: Vec<[usize; 2]>,
 }
 
 fn comments(trivia: &[String]) -> Vec<String> {
@@ -89,8 +91,8 @@ fn parse(source: &str, project: Option<&std::path::Path>) -> Result<Parsed, Stri
         .map_err(|e| format!("cannot start Lean parser: {e}"))?;
     // Read output concurrently with writing: large documents can exceed pipe capacity.
     let mut stdin = child.stdin.take().ok_or("missing parser stdin")?;
-    let source = source.to_owned();
-    let writer = std::thread::spawn(move || stdin.write_all(source.as_bytes()));
+    let input = source.to_owned();
+    let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
     let output = child.wait_with_output().map_err(|e| e.to_string())?;
     let written = writer.join().map_err(|_| "parser writer panicked")?;
     if !output.status.success() {
@@ -104,185 +106,386 @@ fn parse(source: &str, project: Option<&std::path::Path>) -> Result<Parsed, Stri
     {
         let mut de = serde_json::Deserializer::from_slice(&output.stdout);
         de.disable_recursion_limit();
-        Parsed::deserialize(&mut de).map_err(|e| format!("invalid parser response: {e}"))
+        let mut parsed =
+            Parsed::deserialize(&mut de).map_err(|e| format!("invalid parser response: {e}"))?;
+        let mut end = 0;
+        for [start, stop] in &parsed.tokens {
+            if *start < end
+                || *stop < *start
+                || *stop > source.len()
+                || !source.is_char_boundary(*start)
+                || !source.is_char_boundary(*stop)
+            {
+                return Err("unsupported overlapping or invalid syntax token ranges".into());
+            }
+            end = *stop;
+        }
+        attach_block_introducers(&mut parsed.document);
+        Ok(parsed)
+    }
+}
+
+// Keep `:= by` / `:= do` together in the document, so their space is included
+// in width decisions instead of attaching them after the line has been rendered.
+fn attach_block_introducers(doc: &mut Value) {
+    fn leaves(doc: &Value, path: String, result: &mut Vec<(String, String)>) {
+        match tag(doc) {
+            "append" => {
+                leaves(&doc[1], format!("{path}/1"), result);
+                leaves(&doc[2], format!("{path}/2"), result);
+            }
+            "nest" => leaves(&doc[2], format!("{path}/2"), result),
+            "group" => leaves(&doc[1], format!("{path}/1"), result),
+            "text" => result.push((path, doc[1].as_str().unwrap_or("").to_owned())),
+            "line" | "align" => result.push((path, String::new())),
+            _ => {}
+        }
+    }
+    let mut items = Vec::new();
+    leaves(doc, String::new(), &mut items);
+    let mut previous = None;
+    for (i, (path, text)) in items.iter().enumerate() {
+        if text.trim().is_empty() {
+            continue;
+        }
+        if matches!(text.as_str(), "by" | "do")
+            && let Some(j) = previous
+        {
+            let (prev_path, prev_text): &(String, String) = &items[j];
+            if prev_text.trim() == ":=" {
+                *doc.pointer_mut(prev_path).unwrap() =
+                    serde_json::json!(["text", prev_text.trim_end()]);
+                for (gap, _) in &items[j + 1..i] {
+                    *doc.pointer_mut(gap).unwrap() = serde_json::json!(["nil"]);
+                }
+                *doc.pointer_mut(path).unwrap() = serde_json::json!(["text", format!(" {text}")]);
+            }
+        }
+        previous = Some(i);
     }
 }
 
 #[derive(Clone, Copy)]
-struct Frame<'a> {
+struct Item<'a> {
     indent: i64,
-    flat: bool,
-    fill: bool,
     doc: &'a Value,
 }
-
+#[derive(Clone)]
+struct Group<'a> {
+    flat: Option<bool>,
+    fill: bool,
+    items: Vec<Item<'a>>,
+}
+#[derive(Default)]
+struct Space {
+    line: bool,
+    hard: bool,
+    size: usize,
+}
 fn tag(doc: &Value) -> &str {
     doc[0].as_str().unwrap_or("nil")
 }
-
-fn fits(mut remaining: i64, mut stack: Vec<Frame<'_>>) -> bool {
-    while remaining >= 0 {
-        let Some(frame) = stack.pop() else {
-            return true;
-        };
-        let d = frame.doc;
-        match tag(d) {
-            "text" => {
-                let text = d[1].as_str().unwrap_or("");
-                if text.contains('\n') {
-                    return !frame.flat;
+fn measure(doc: &Value, flat: bool, margin: i64, width: usize) -> Space {
+    match tag(doc) {
+        "text" => {
+            let s = doc[1].as_str().unwrap_or("");
+            let line = s.contains('\n');
+            Space {
+                line,
+                hard: flat && line,
+                size: s.split('\n').next().unwrap_or("").chars().count(),
+            }
+        }
+        "line" => Space {
+            line: !flat,
+            size: usize::from(flat),
+            ..Space::default()
+        },
+        "align" if !flat || doc[1].as_bool().unwrap_or(false) => {
+            if (width as i64) < margin {
+                Space {
+                    size: (margin - width as i64) as usize,
+                    ..Space::default()
                 }
-                remaining -= text.chars().count() as i64;
+            } else {
+                Space {
+                    line: true,
+                    ..Space::default()
+                }
             }
-            "line" if !frame.flat => return true,
-            "line" => remaining -= 1,
-            "append" => {
-                stack.push(Frame {
-                    doc: &d[2],
-                    ..frame
-                });
-                stack.push(Frame {
-                    doc: &d[1],
-                    ..frame
-                });
+        }
+        "append" => {
+            let a = measure(&doc[1], flat, margin, width);
+            if a.line || a.size > width {
+                a
+            } else {
+                let b = measure(&doc[2], flat, margin, width - a.size);
+                Space {
+                    size: a.size + b.size,
+                    ..b
+                }
             }
-            "nest" => stack.push(Frame {
-                doc: &d[2],
-                ..frame
-            }),
-            "group" => stack.push(Frame {
-                doc: &d[1],
-                ..frame
-            }),
-            _ => {}
+        }
+        "nest" => measure(&doc[2], flat, margin - doc[1].as_i64().unwrap_or(0), width),
+        "group" => measure(&doc[1], true, margin, width),
+        _ => Space::default(),
+    }
+}
+fn measure_groups(groups: &[Group<'_>], col: usize, mut width: usize) -> Space {
+    let mut total = 0;
+    for g in groups.iter().rev() {
+        for i in g.items.iter().rev() {
+            let r = measure(
+                i.doc,
+                g.flat == Some(true),
+                width as i64 + col as i64 - i.indent,
+                width,
+            );
+            total += r.size;
+            if r.line || r.size > width {
+                return Space { size: total, ..r };
+            }
+            width -= r.size;
         }
     }
-    false
+    Space {
+        size: total,
+        ..Space::default()
+    }
 }
-
-/// Wadler-style document layout. Literal text is emitted verbatim, including
-/// multiline comments and strings; only document line nodes introduce indentation.
+fn regroup<'a>(mut g: Group<'a>, groups: &mut Vec<Group<'a>>, col: usize, width: usize) {
+    g.flat = Some(!g.fill);
+    let w = width.saturating_sub(col);
+    let r = measure_groups(std::slice::from_ref(&g), col, w);
+    let total = if r.line || r.size > w {
+        r.size
+    } else {
+        r.size + measure_groups(groups, col, w - r.size).size
+    };
+    g.flat = Some(!r.hard && total <= w);
+    groups.push(g);
+}
+/// Render Lean's all-or-none and fill groups, measuring their remaining context.
+/// Literal text is kept byte-for-byte, including multiline strings and comments.
 pub fn render(doc: &Value, width: usize) -> String {
-    let mut stack = vec![Frame {
-        indent: 0,
-        flat: false,
+    let mut groups = vec![Group {
+        flat: None,
         fill: false,
-        doc,
+        items: vec![Item { indent: 0, doc }],
     }];
     let mut out = String::new();
-    let mut column = 0;
+    let mut col = 0;
     let mut pending = 0;
-    let mut braces: Vec<usize> = Vec::new();
-    while let Some(frame) = stack.pop() {
-        let d = frame.doc;
+    let mut braces = Vec::new();
+    while let Some(mut g) = groups.pop() {
+        let Some(i) = g.items.pop() else { continue };
+        let d = i.doc;
         match tag(d) {
-            "text" => {
-                let text = d[1].as_str().unwrap_or("");
-                if text.is_empty() {
-                    continue;
-                }
-                if text.chars().all(char::is_whitespace) && text.contains('\n') {
-                    for _ in 0..text.chars().filter(|c| *c == '\n').count() {
-                        if !out.ends_with("\n\n") {
-                            out.push('\n');
-                        }
-                    }
-                    column = 0;
-                    pending = frame.indent.max(0) as usize;
-                    continue;
-                }
-                // Keep block introducers with their assignment. Lean's document
-                // can place `by` on a separate line when its proof does not flatten.
-                if matches!(text, "by" | "do") && out.trim_end().ends_with(":=") {
-                    out.truncate(out.trim_end().len());
-                    out.push(' ');
-                    pending = 0;
-                    column = out.rsplit('\n').next().unwrap_or("").chars().count();
-                }
-                if text.trim() == "}" {
-                    braces.pop();
-                }
-                // A record that starts after an application on the same line
-                // must keep later fields beyond its opening brace. Otherwise
-                // Lean interprets the wrapped field as the end of the record.
-                if column == 0 && text.trim() != "}" {
-                    pending = pending.max(braces.last().copied().unwrap_or(0));
-                }
-                if pending > 0 && !text.starts_with('\n') {
-                    out.extend(std::iter::repeat_n(' ', pending));
-                    column = pending;
-                }
-                pending = 0;
-                out.push_str(text);
-                column = text
-                    .rsplit_once('\n')
-                    .map_or(column + text.chars().count(), |(_, tail)| {
-                        tail.chars().count()
-                    });
-                if text.trim() == "{" {
-                    braces.push(column + 1);
-                }
+            "append" => {
+                g.items.push(Item { doc: &d[2], ..i });
+                g.items.push(Item { doc: &d[1], ..i });
             }
-            "line"
-                if frame.flat
-                    || (frame.fill
-                        && fits(width.saturating_sub(column + 1) as i64, stack.clone())) =>
-            {
-                out.push(' ');
-                column += 1;
+            "nest" => g.items.push(Item {
+                indent: i.indent + d[1].as_i64().unwrap_or(0),
+                doc: &d[2],
+            }),
+            "group" if g.flat != Some(true) => {
+                let child = Group {
+                    flat: Some(false),
+                    fill: d[2].as_bool().unwrap_or(false),
+                    items: vec![Item { doc: &d[1], ..i }],
+                };
+                groups.push(g);
+                regroup(child, &mut groups, col.max(pending), width);
+                continue;
+            }
+            "group" => g.items.push(Item { doc: &d[1], ..i }),
+            "text" => {
+                let s = d[1].as_str().unwrap_or("");
+                if s.chars().all(char::is_whitespace) && s.contains('\n') {
+                    out.push_str(s.trim_end_matches([' ', '\t']));
+                    col = 0;
+                    pending = i.indent.max(0) as usize;
+                    if g.flat.is_some() {
+                        regroup(g, &mut groups, pending, width);
+                        continue;
+                    }
+                } else if !s.is_empty() {
+                    if s.trim() == "}" {
+                        braces.pop();
+                    }
+                    if col == 0 && s.trim() != "}" {
+                        pending = pending.max(braces.last().copied().unwrap_or(0));
+                    }
+                    if pending > 0 && !s.starts_with('\n') {
+                        out.extend(std::iter::repeat_n(' ', pending));
+                        col = pending;
+                    }
+                    pending = 0;
+                    out.push_str(s);
+                    col = s
+                        .rsplit_once('\n')
+                        .map_or(col + s.chars().count(), |(_, tail)| tail.chars().count());
+                    if s.trim() == "{" {
+                        braces.push(col + 1);
+                    }
+                    if s.contains('\n') && g.flat.is_some() {
+                        regroup(g, &mut groups, col, width);
+                        continue;
+                    }
+                }
             }
             "line" => {
-                if !out.ends_with("\n\n") {
-                    out.push('\n');
+                let mut flat = g.flat == Some(true);
+                if g.fill && flat {
+                    let mut trial = groups.clone();
+                    regroup(
+                        g.clone(),
+                        &mut trial,
+                        col.max(pending),
+                        width.saturating_sub(1),
+                    );
+                    flat = trial.last().unwrap().flat == Some(true);
+                    if flat {
+                        g = trial.pop().unwrap();
+                    }
                 }
-                column = 0;
-                pending = frame.indent.max(0) as usize;
-            }
-            "align" => {
-                let indent = frame.indent.max(0) as usize;
-                if (!frame.flat || d[1].as_bool().unwrap_or(false)) && column >= indent {
+                if flat {
+                    if pending > 0 {
+                        out.extend(std::iter::repeat_n(' ', pending));
+                        col = pending;
+                        pending = 0;
+                    }
+                    out.push(' ');
+                    col += 1;
+                } else {
                     out.push('\n');
-                    column = 0;
+                    col = 0;
+                    pending = i.indent.max(0) as usize;
+                    if g.fill {
+                        regroup(g, &mut groups, pending, width);
+                        continue;
+                    }
+                }
+            }
+            "align" if g.flat != Some(true) || d[1].as_bool().unwrap_or(false) => {
+                let indent = i.indent.max(0) as usize;
+                if col == 0 {
                     pending = indent;
-                } else if column < indent {
-                    out.extend(std::iter::repeat_n(' ', indent - column));
-                    column = indent;
+                } else if col < indent {
+                    out.extend(std::iter::repeat_n(' ', indent - col));
+                    col = indent;
+                } else {
+                    out.push('\n');
+                    col = 0;
+                    pending = indent;
                 }
-            }
-            "append" => {
-                stack.push(Frame {
-                    doc: &d[2],
-                    ..frame
-                });
-                stack.push(Frame {
-                    doc: &d[1],
-                    ..frame
-                });
-            }
-            "nest" => stack.push(Frame {
-                indent: frame.indent + d[1].as_i64().unwrap_or(0),
-                doc: &d[2],
-                ..frame
-            }),
-            "group" => {
-                let trial = vec![Frame {
-                    flat: true,
-                    doc: &d[1],
-                    ..frame
-                }];
-                let flat =
-                    frame.flat || fits(width.saturating_sub(column.max(pending)) as i64, trial);
-                stack.push(Frame {
-                    flat,
-                    fill: !flat && d[2].as_bool().unwrap_or(false),
-                    doc: &d[1],
-                    ..frame
-                });
             }
             _ => {}
         }
+        groups.push(g);
     }
     out.trim_matches([' ', '\n', '\r', '\t']).to_owned() + "\n"
+}
+
+// A semicolon-separated tactic sequence cannot partly wrap while its first
+// tactic remains on the `by` line. Use parser ranges to move the whole sequence.
+fn layout_blocks(source: &str, parsed: &Parsed, rendered: String) -> String {
+    let mut positions = Vec::new();
+    let mut cursor = 0;
+    for token in &parsed.tokens {
+        let Some(text) = source.get(token[0]..token[1]) else {
+            return rendered;
+        };
+        let Some(tail) = rendered.get(cursor..) else {
+            return rendered;
+        };
+        cursor += tail.len() - tail.trim_start_matches(char::is_whitespace).len();
+        if !rendered[cursor..].starts_with(text) {
+            return rendered;
+        }
+        positions.push([cursor, cursor + text.len()]);
+        cursor += text.len();
+    }
+    let mut edits = Vec::new();
+    for block in &parsed.blocks {
+        let Some(first) = parsed.tokens.iter().position(|t| t[0] == block[0]) else {
+            continue;
+        };
+        let Some(last) = parsed.tokens.iter().rposition(|t| t[1] == block[1]) else {
+            continue;
+        };
+        if first >= last {
+            continue;
+        }
+        let start = positions[first][1];
+        let stop = positions[last][1];
+        let body = &rendered[start..stop];
+        if let Some((head, tail)) = body.split_once('\n') {
+            if head.trim().is_empty() {
+                continue;
+            }
+            let indent = tail
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| l.chars().take_while(|c| c.is_whitespace()).count())
+                .min()
+                .unwrap_or(2);
+            edits.push((
+                start,
+                positions[first + 1][0],
+                format!("\n{}", " ".repeat(indent)),
+            ));
+        }
+    }
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let mut result = rendered;
+    for (start, end, text) in edits {
+        result.replace_range(start..end, &text);
+    }
+    result
+}
+
+// Comments belong to gaps between source tokens, not formatter nesting groups.
+// Preserve comment-bearing gaps, adjusting only indentation of the next token.
+fn restore_comments(
+    source: &str,
+    original: &Parsed,
+    rendered: &str,
+    clean: &Parsed,
+) -> Result<String, String> {
+    if original.tree != clean.tree || original.tokens.len() != clean.tokens.len() {
+        return Err("formatting would change the Lean syntax tree; input unchanged".into());
+    }
+    let mut edits = Vec::new();
+    let mut old_end = 0;
+    let mut new_end = 0;
+    for (old, new) in original.tokens.iter().zip(&clean.tokens) {
+        let gap = source
+            .get(old_end..old[0])
+            .ok_or("overlapping syntax token ranges")?;
+        if !comments(&[gap.to_owned()]).is_empty() {
+            let gap = if let Some((body, _)) = gap.rsplit_once('\n') {
+                let line = rendered[..new[0]].rsplit('\n').next().unwrap_or("");
+                let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+                format!("{body}\n{indent}")
+            } else {
+                gap.to_owned()
+            };
+            edits.push((new_end, new[0], gap));
+        }
+        old_end = old[1];
+        new_end = new[1];
+    }
+    let gap = &source[old_end..];
+    if !comments(&[gap.to_owned()]).is_empty() {
+        edits.push((new_end, rendered.len(), gap.to_owned()));
+    }
+    let mut result = rendered.to_owned();
+    for (start, end, gap) in edits.into_iter().rev() {
+        result.replace_range(start..end, &gap);
+    }
+    Ok(result.trim_end_matches([' ', '\n', '\r', '\t']).to_owned() + "\n")
 }
 
 pub fn format_source(source: &str, width: usize) -> Result<String, String> {
@@ -298,7 +501,9 @@ pub fn format_source_in(
         return Err("line width must be between 20 and 300".into());
     }
     let original = parse(source, project)?;
-    let formatted = render(&original.document, width);
+    let formatted = layout_blocks(source, &original, render(&original.document, width));
+    let clean = parse(&formatted, project)?;
+    let formatted = restore_comments(source, &original, &formatted, &clean)?;
     let checked = parse(&formatted, project)?;
     if original.tree != checked.tree {
         return Err("formatting would change the Lean syntax tree; input unchanged".into());
@@ -307,7 +512,9 @@ pub fn format_source_in(
         return Err("formatting would change comment contents or ordering; input unchanged".into());
     }
     // A formatter must settle after one pass, including its handling of comments.
-    if render(&checked.document, width) != formatted {
+    let next = layout_blocks(&formatted, &checked, render(&checked.document, width));
+    let next_clean = parse(&next, project)?;
+    if restore_comments(&formatted, &checked, &next, &next_clean)? != formatted {
         return Err("formatter did not reach a stable layout; input unchanged".into());
     }
     Ok(formatted)

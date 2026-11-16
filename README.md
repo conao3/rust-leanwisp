@@ -28,9 +28,9 @@ def double (n : Nat) : Nat :=
 
 Declarations are separated with a blank line and files end with one newline.
 Proof bullets, structure fields, `do` statements, and match arms receive canonical
-indentation. Groups wrap according to `--line-width`; unbreakable literals and
-comments may exceed it. Literal contents, nested comments and their ordering are
-preserved. Formatting checks both syntax-tree equality and comment contents,
+indentation. Groups wrap according to `--line-width`; unbreakable tokens and
+preserved comments may exceed it. Literal contents, nested comments and their
+ordering are preserved. Formatting checks both syntax-tree equality and comment contents,
 then checks that a second formatting pass produces the same result. A failure
 returns a diagnostic without writing the input.
 
@@ -81,3 +81,9 @@ Lake-local notation, CLI write/check behavior and compilation of formatted Lean.
 Apache-2.0. Leanwisp uses the Lean parser/formatter APIs pinned by `flake.lock`.
 The prior Python prototype is retained in Git history; current implementation and
 packaging use Rust and the Lean adapter.
+
+Mathlib compatibility is tracked with a read-only, repeatable sample check in
+[docs/mathlib-evaluation.md](docs/mathlib-evaluation.md). It records compilation,
+idempotence, line-width measurements and source hashes. Some Mathlib formatter
+extensions remain unsupported, so review the report before applying Leanwisp to
+Mathlib in bulk. `tools/check-mathlib.py --help` describes the check inputs.

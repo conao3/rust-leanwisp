@@ -247,3 +247,92 @@ fn exit_does_not_drop_following_source() {
     assert!(result.contains("def later : Nat"), "{result}");
     assert!(result.contains("-- keep the following code"), "{result}");
 }
+
+#[test]
+fn mathlib_comment_boundaries() {
+    let source = "/-!\n# Basic operations\n\nModule documentation.\n-/\n\nstructure Entry where\n  value : Nat\n\n-- Shortcut instances\ndef entry:Entry:={value:=3}\n";
+    let result = stable(source, 80);
+    assert!(
+        result.starts_with("/-!\n# Basic operations\n\nModule documentation.\n-/\n"),
+        "{result}"
+    );
+    assert!(
+        result.contains("\n\n-- Shortcut instances\ndef entry"),
+        "{result}"
+    );
+}
+
+#[test]
+fn notation_can_reference_unelaborated_declaration() {
+    stable(
+        "namespace Local\ndef combine := Nat.add\ninfixl:65 \" +++ \" => combine\n#check 1+++2\nend Local\n",
+        80,
+    );
+}
+
+#[test]
+fn groups_count_their_following_context() {
+    use serde_json::json;
+    let doc = json!([
+        "append",
+        [
+            "group",
+            [
+                "append",
+                ["text", "123456"],
+                ["append", ["line"], ["text", "789"]]
+            ],
+            false
+        ],
+        ["text", " tail"]
+    ]);
+    assert_eq!(leanwisp::render(&doc, 12), "123456\n789 tail\n");
+}
+
+#[test]
+fn wrapped_semicolon_proof_starts_below_by() {
+    let source =
+        "theorem repeated_true : True := by trivial; trivial; trivial; trivial; trivial; trivial\n";
+    let result = stable(source, 40);
+    assert!(result.contains(":= by\n  "), "{result}");
+}
+
+#[test]
+fn preserve_identifier_spelling() {
+    let result = stable("def Prop.exists : Nat := 3\n#check Prop.exists\n", 80);
+    assert!(result.contains("Prop.exists"), "{result}");
+    assert!(!result.contains("«Prop»"), "{result}");
+}
+
+#[test]
+fn inherit_doc_on_local_notation() {
+    let result = stable(
+        "namespace Local\ndef combine := Nat.add\n@[inherit_doc] infixl:65 \" +++ \" => combine\n#check 1+++2\nend Local\n",
+        80,
+    );
+    assert!(result.contains("@[inherit_doc]"), "{result}");
+}
+
+#[test]
+fn do_pattern_let_continuation_is_outside_failure_branch() {
+    let source = "def first (xs : List Nat) : Option Nat := do\n  let x :: _ := xs | return none\n  return some x\n";
+    let result = stable(source, 80);
+    assert!(result.contains("\n  return some x"), "{result}");
+}
+
+#[test]
+fn by_introducer_counts_toward_line_width() {
+    let source = "theorem some_very_long_theorem_name (a b : Nat) : a + b = b + a := by\n  exact Nat.add_comm a b\n";
+    let result = stable(source, 60);
+    assert!(
+        result.lines().all(|line| line.chars().count() <= 60),
+        "{result}"
+    );
+}
+
+#[test]
+fn preserve_ascii_operator_spelling() {
+    let result = stable("#check (3>=2)\n#check (2<=3)\n", 80);
+    assert!(result.contains("3 >= 2"), "{result}");
+    assert!(result.contains("2 <= 3"), "{result}");
+}
