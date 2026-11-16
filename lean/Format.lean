@@ -387,13 +387,28 @@ def offRegions (source : String) : Array (Nat × Nat) := Id.run do
   if let some s := start then regions := regions.push (s, source.utf8ByteSize + 1)
   return regions
 
-structure Parsed where
+structure Entry where
   command : Syntax
   env : Environment
   scope : Elab.Command.Scope
+  before : Elab.Frontend.State
+  stop : Nat
+  tree : UInt64
+  tokens : Array Json
+  trivia : Array Json
+  blocks : Array Json
+  lexemes : Array (Nat × String)
+  prefixHash : UInt64
+  envHash : UInt64
+
+def commentTrivia (stx : Syntax) : Array Json :=
+  (trivia stx).filter fun
+    | .str value => value.any (· == '-')
+    | _ => false
 
 open Elab Frontend in
-partial def collect (acc : Array Parsed) : FrontendM (Array Parsed) := do
+partial def collect (seed : UInt64) (acc : Array Entry) : FrontendM (Array Entry) := do
+  let before ← get
   let ctx ← getInputContext
   let cs ← getCommandState
   let ps ← getParserState
@@ -406,69 +421,102 @@ partial def collect (acc : Array Parsed) : FrontendM (Array Parsed) := do
   if messages.hasErrors then
     let texts ← messages.toList.mapM (·.toString)
     throw (IO.userError (String.intercalate "\n" texts ++ "\ninvalid Lean syntax"))
-  let acc := acc.push { command := cmd, env := cs.env, scope }
+  let previous := acc.back?.map (·.stop) |>.getD before.parserState.pos.byteIdx
+  let prefixHash := mixHash (acc.back?.map (·.prefixHash) |>.getD seed)
+    (hash (String.Pos.Raw.extract ctx.inputString ⟨previous⟩ ps.pos))
+  let envHash := match acc.back? with
+    | some last => if changesParser last.command then
+        mixHash last.envHash (hash (String.Pos.Raw.extract ctx.inputString
+          (last.command.getPos?.getD 0) (last.command.getTailPos?.getD 0)))
+      else last.envHash
+    | none => seed
+  let acc := acc.push {
+    command := cmd, env := cs.env, scope, before, stop := ps.pos.byteIdx,
+    prefixHash, envHash,
+    tree := hash (fingerprint cmd).compress, tokens := tokens cmd, trivia := commentTrivia cmd,
+    blocks := blocks cmd, lexemes := lexemes ctx.inputString cmd }
   if cmd.isOfKind `Lean.Parser.Command.eoi then return acc
   if changesParser cmd then
     elabCommandAtFrontend (parserCommand cmd)
     modify fun st => { st with commandState := { st.commandState with messages := {} } }
-  collect acc
+  collect seed acc
 
-def formatCommand (ctx : Parser.InputContext) (parsed : Parsed) : IO (Except String Std.Format) := do
+def formatCommand (ctx : Parser.InputContext) (entry : Entry) : IO (Except String Std.Format) := do
   let core : Core.Context := {
-    fileName := ctx.fileName, fileMap := ctx.fileMap, options := parsed.scope.opts,
-    currNamespace := parsed.scope.currNamespace, openDecls := parsed.scope.openDecls }
+    fileName := ctx.fileName, fileMap := ctx.fileMap, options := entry.scope.opts,
+    currNamespace := entry.scope.currNamespace, openDecls := entry.scope.openDecls }
   try
-    let (fmt, _) ← (PrettyPrinter.formatCategory `command (withoutTrivia parsed.command)).toIO
-      core { env := parsed.env }
+    let (fmt, _) ← (PrettyPrinter.formatCategory `command (withoutTrivia entry.command)).toIO
+      core { env := entry.env }
     return .ok (flattenElseIf fmt)
   catch ex => return .error ex.toString
 
-def formatCommands (memo : IO.Ref (Std.HashMap String (Except String Std.Format)))
-    (ctx : Parser.InputContext) (verbatim : Array Nat) (off : Array (Nat × Nat))
-    (parsed : Array Parsed) : IO (Array Std.Format × Array Json) := do
+structure Memo where
+  formats : Std.HashMap String (Except String Std.Format) := {}
+  documents : Std.HashMap String Json := {}
+
+def commandDocuments (memo : IO.Ref Memo) (ctx : Parser.InputContext) (verbatim lines : Array Nat)
+    (off : Array (Nat × Nat)) (entries : Array Entry) : IO (Array Json × Array Json) := do
+  let source := ctx.inputString
   let mut jobs : Array (String × Std.Format × Option (Task (Except IO.Error (Except String Std.Format)))) := #[]
-  for p in parsed, i in [0:parsed.size] do
-    let cmd := p.command
+  for entry in entries, i in [0:entries.size] do
+    let cmd := entry.command
     let start := (cmd.getPos?.getD 0).byteIdx
-    let text := String.Pos.Raw.extract ctx.inputString (cmd.getPos?.getD 0) (cmd.getTailPos?.getD 0)
+    let text := String.Pos.Raw.extract source (cmd.getPos?.getD 0) (cmd.getTailPos?.getD 0)
     let original := Std.Format.text text
-    let key := s!"{start}:{text}"
+    let key := s!"{start}:{entry.prefixHash}:{text.utf8ByteSize}"
+    let documentKey := s!"{lines.contains i}:{entry.envHash}:{text}"
     if cmd.isOfKind `Lean.Parser.Command.moduleDoc then jobs := jobs.push ("", original, none)
     else if verbatim.contains i then jobs := jobs.push ("requested", original, none)
     else if off.any (fun (a, b) => a <= start && start < b) then jobs := jobs.push ("disabled", original, none)
-    else if let some result := (← memo.get).get? key then
+    else if (← memo.get).documents.contains documentKey then
+      jobs := jobs.push (key, original, some (.pure (.ok (.ok .nil))))
+    else if let some result := (← memo.get).formats.get? key then
       jobs := jobs.push (key, original, some (.pure (.ok result)))
     else
-      jobs := jobs.push (key, original, some (← IO.asTask (formatCommand ctx p)))
+      jobs := jobs.push (key, original, some (← IO.asTask (formatCommand ctx entry)))
   let mut docs := #[]
   let mut kept := #[]
-  for (key, original, job) in jobs, p in parsed, i in [0:jobs.size] do
-    let start := (p.command.getPos?.getD 0).byteIdx
+  for (key, original, job) in jobs, entry in entries, i in [0:jobs.size] do
+    let start := (entry.command.getPos?.getD 0).byteIdx
     let keepIt (reason : String) := Json.arr #[toJson i, toJson start, toJson reason]
+    let text := String.Pos.Raw.extract source (entry.command.getPos?.getD 0) (entry.command.getTailPos?.getD 0)
+    let documentKey := s!"{lines.contains i}:{entry.envHash}:{text}"
     match job with
     | none =>
-      docs := docs.push original
+      docs := docs.push (document (.text original.pretty))
       if !key.isEmpty then kept := kept.push (keepIt key)
     | some task =>
+      if let some doc := (← memo.get).documents.get? documentKey then
+        docs := docs.push doc
+        continue
       let result ← IO.ofExcept (← IO.wait task)
-      memo.modify (·.insert key result)
+      memo.modify fun m => { m with formats := m.formats.insert key result }
       match result with
-      | .ok fmt => docs := docs.push fmt
+      | .ok fmt =>
+        let lengths := entry.lexemes.foldl (init := {}) fun acc (tag, raw) =>
+          acc.insert (tag - lexemeTagBase) raw.utf8ByteSize
+        let fmt := applyLayoutMarks source lengths (lines.contains i) fmt
+        let doc := document (restoreLexemes (Std.HashMap.ofList entry.lexemes.toList) fmt)
+        memo.modify fun m => { m with documents := m.documents.insert documentKey doc }
+        docs := docs.push doc
       | .error message =>
-        docs := docs.push original
+        docs := docs.push (document (.text original.pretty))
         kept := kept.push (keepIt message)
   return (docs, kept)
 
-def joinCommands (source : String) (commands : Array Syntax) (docs : Array Std.Format) :
-    Std.Format := Id.run do
-  let mut fmt := Std.Format.nil
-  for i in [0:docs.size] do
+def appendJson (a b : Json) : Json := Json.arr #[toJson "append", a, b]
+
+def joinDocuments (source : String) (commands : Array Syntax) (docs : Array Json) : Json := Id.run do
+  let mut out := Json.arr #[toJson "nil"]
+  for doc in docs, i in [0:docs.size] do
     if i > 0 then
       let gap := String.Pos.Raw.extract source (commands[i - 1]!.getTailPos?.getD 0)
         (commands[i]!.getPos?.getD 0)
-      fmt := fmt ++ Std.Format.line ++ (if blankLineBetween gap then Std.Format.line else .nil)
-    fmt := fmt ++ .tag (commandTagBase + i) .nil ++ docs[i]!
-  return fmt
+      out := appendJson out (Json.arr #[toJson "line"])
+      if blankLineBetween gap then out := appendJson out (Json.arr #[toJson "line"])
+    out := appendJson out (appendJson (Json.arr #[toJson "command", toJson i]) doc)
+  return out
 
 def commandRange (cmd : Syntax) : Json :=
   Json.arr #[toJson (cmd.getPos?.getD 0).byteIdx, toJson (cmd.getTailPos?.getD 0).byteIdx]
@@ -478,12 +526,26 @@ structure Request where
   verbatim : Array Nat := #[]
   lines : Array Nat := #[]
   document : Bool := true
+  session : Nat := 0
   deriving FromJson
 
-unsafe def formatRequest (cache : IO.Ref (Option (String × Environment)))
-    (memo : IO.Ref (Std.HashMap String (Except String Std.Format))) (req : Request) :
-    IO Json := do
+structure Run where
+  source : ByteArray
+  entries : Array Entry
+
+def commonPrefix (a b : ByteArray) : Nat := Id.run do
+  let n := min a.size b.size
+  let mut i := 0
+  while i < n && a.get! i == b.get! i do i := i + 1
+  return i
+
+unsafe def formatRequest (cache : IO.Ref (Option (String × Environment))) (memo : IO.Ref Memo)
+    (runs : IO.Ref (Array Run)) (session : IO.Ref Nat) (req : Request) : IO Json := do
+  if req.session != (← session.get) then
+    session.set req.session
+    if (← memo.get).formats.size > 100000 then memo.set {}
   let source := req.source
+  let bytes := source.toUTF8
   let ctx := Parser.mkInputContext source "input.lean"
   let (header, ps, messages) ← Parser.parseHeader ctx
   if messages.hasErrors then
@@ -500,28 +562,46 @@ unsafe def formatRequest (cache : IO.Ref (Option (String × Environment)))
       let env ← importModules (level := level) (loadExts := true) imports {} 0
       cache.set (some (key, env))
       pure env
+  let mut reused : Array Entry := #[]
+  let mut resume : Option Elab.Frontend.State := none
+  for run in ← runs.get do
+    let same := commonPrefix run.source bytes
+    if same < ps.pos.byteIdx then continue
+    let mut k := 0
+    while run.entries[k + 1]?.any (·.stop <= same) do k := k + 1
+    if same == bytes.size && same == run.source.size then k := run.entries.size
+    if k > reused.size then
+      reused := run.entries.extract 0 k
+      resume := run.entries[k]?.map (·.before)
+  let initial : Elab.Frontend.State := resume.getD
+    { commandState := Elab.Command.mkState env {} (Options.setBool {} `quotPrecheck false),
+      parserState := ps, cmdPos := ps.pos }
+  let entries ← if reused.size > 0 && resume.isNone then pure reused else do
+    let seed := hash (String.Pos.Raw.extract source 0 ps.pos)
+    let (entries, _) ← (collect seed reused).run { inputCtx := ctx } |>.run initial
+    pure entries
+  runs.modify fun rs => (rs.filter (·.source != bytes)).push { source := bytes, entries } |>.extract
+    (rs.size - 3) (rs.size + 1)
+  let commands := entries.map (·.command)
   let (headerFmt, _) ← (PrettyPrinter.format Parser.Module.header.formatter (withoutTrivia header)).toIO
     { fileName := "input.lean", fileMap := ctx.fileMap } { env }
-  let (parsed, _) ← (collect #[]).run { inputCtx := ctx } |>.run
-    { commandState := Elab.Command.mkState env {} (Options.setBool {} `quotPrecheck false), parserState := ps, cmdPos := ps.pos }
-  let commands := parsed.map (·.command)
-  let (docs, kept) ← if req.document then formatCommands memo ctx req.verbatim (offRegions source) parsed
-    else pure (#[], #[])
-  let stx := mkNode `Lean.Parser.Module.module #[header, mkListNode commands]
   let headerFmt := match header.raw.getTailPos?, commands[0]? with
     | some tail, some first =>
       if blankLineBetween (String.Pos.Raw.extract source tail (first.getPos?.getD tail)) then headerFmt
       else dropLastBreak headerFmt
     | _, _ => headerFmt
-  let lexemes := lexemes source stx
-  let lengths := lexemes.foldl (init := {}) fun acc (tag, raw) =>
-    acc.insert (tag - lexemeTagBase) raw.utf8ByteSize
-  let document := if !req.document then Json.arr #[toJson "nil"] else
-    let docs := docs.mapIdx fun i doc => applyLayoutMarks source lengths (req.lines.contains i) doc
-    let fmt := headerFmt ++ joinCommands source commands docs
-    document (restoreLexemes (Std.HashMap.ofList lexemes.toList) fmt)
-  return Json.mkObj [("Tree", fingerprint stx), ("Document", document),
-    ("Trivia", Json.arr (trivia stx)), ("Tokens", Json.arr (tokens stx)), ("Blocks", Json.arr (blocks stx)),
+  let headerLexemes := Std.HashMap.ofList (lexemes source header).toList
+  let (documentJson, kept) ← if !req.document then pure (Json.arr #[toJson "nil"], #[]) else do
+    let (docs, kept) ← commandDocuments memo ctx req.verbatim req.lines (offRegions source) entries
+    pure (appendJson (document (restoreLexemes headerLexemes headerFmt))
+      (joinDocuments source commands docs), kept)
+  let flat (f : Entry → Array Json) := entries.foldl (init := #[]) fun acc e => acc ++ f e
+  return Json.mkObj [
+    ("Trees", toJson (#[hash (fingerprint header).compress] ++ entries.map (·.tree))),
+    ("Document", documentJson),
+    ("Trivia", Json.arr (commentTrivia header ++ flat (·.trivia))),
+    ("Tokens", Json.arr (tokens header ++ flat (·.tokens))),
+    ("Blocks", Json.arr (blocks header ++ flat (·.blocks))),
     ("Commands", Json.arr (commands.map commandRange)), ("Kept", Json.arr kept),
     ("Lines", toJson (req.lines.filter (· < commands.size)))]
 
@@ -530,6 +610,8 @@ unsafe def main : IO Unit := do
   enableInitializersExecution
   let cache ← IO.mkRef none
   let memo ← IO.mkRef {}
+  let runs ← IO.mkRef #[]
+  let session ← IO.mkRef 0
   let stdin ← IO.getStdin
   let stdout ← IO.getStdout
   repeat
@@ -537,7 +619,7 @@ unsafe def main : IO Unit := do
     if line.isEmpty then break
     let response ← try
         let req ← IO.ofExcept (Json.parse line >>= fromJson?)
-        formatRequest cache memo req
+        formatRequest cache memo runs session req
       catch ex => pure (Json.mkObj [("Error", toJson ex.toString)])
     stdout.putStrLn response.compress
     stdout.flush

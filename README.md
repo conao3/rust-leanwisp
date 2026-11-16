@@ -108,21 +108,36 @@ formatted in parallel, one per CPU unless `--jobs N` is given.
 
 ## Speed
 
-Each file uses one Lean process: its imports load once, and every validation
-parse of that file is served by the same process. Commands are formatted in
-parallel, and parses whose layout is not needed skip formatting. Results are
+A Lean process loads a file's imports once and serves every validation parse of
+that file; with `--paths`, files that share imports are formatted in one process.
+The process keeps the parse of each command, so a reparse after a fallback or an
+edit only parses the text after the first change, and command layouts are reused
+when the preceding syntax-changing commands are unchanged. Commands are
+formatted in parallel, and parses whose layout is not needed skip formatting.
+Comment restoration and the idempotence check align tokens instead of
+reparsing. Results are
 cached in `$XDG_CACHE_HOME/leanwisp` (default `~/.cache/leanwisp`), keyed by the
 source, the line width, the Leanwisp build and the `.olean` files of the imported
 modules, so an unchanged file is not parsed again. `--no-cache` disables the
 cache; `--debug` prints parse and render times.
 
+For editors, `leanwisp daemon start-daemon` keeps Lean processes loaded and
+serves `format-source` and `check-source` for single inputs over a Unix socket
+(`$XDG_RUNTIME_DIR/leanwisp.sock`, else `/tmp/leanwisp-UID.sock`; `--socket PATH`
+changes it). Those commands use a running daemon of the same build automatically
+and fall back to local formatting otherwise; `--no-daemon` forces local
+formatting. `leanwisp daemon stop-daemon` stops it. Reformatting a 1,090-line
+Mathlib file through the daemon takes about 0.2 s, and about 0.3 s after an edit
+near its end.
+
 On the 31-file Mathlib sample in [docs/mathlib-evaluation.md](docs/mathlib-evaluation.md)
-(6 CPUs, `check-source --paths`):
+(6 CPUs, `check-source --paths`, both measured back to back on the same busy
+machine):
 
 | | Uncached | Cached |
 |---|---:|---:|
-| Leanwisp | 8.8 s | 0.3 s |
-| [lean-fmt](https://github.com/jcreinhold/lean-fmt) `57c2390` (`format --check`) | 31.6 s | 20.3 s |
+| Leanwisp | 11.7 s | 0.08 s |
+| [lean-fmt](https://github.com/jcreinhold/lean-fmt) `57c2390` (`format --check`) | 42.8 s | 34.3 s |
 
 ## CLI
 

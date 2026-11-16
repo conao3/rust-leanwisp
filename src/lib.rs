@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Parsed {
-    tree: Value,
+    trees: Vec<String>,
     document: Value,
     trivia: Vec<String>,
     tokens: Vec<[usize; 2]>,
@@ -53,6 +53,7 @@ fn comments(trivia: &[String]) -> Vec<String> {
 }
 
 struct Adapter {
+    session: u64,
     child: std::process::Child,
     stdin: std::process::ChildStdin,
     stdout: std::io::BufReader<std::process::ChildStdout>,
@@ -102,6 +103,7 @@ impl Adapter {
         let stdin = child.stdin.take().ok_or("missing parser stdin")?;
         let stdout = std::io::BufReader::new(child.stdout.take().ok_or("missing parser stdout")?);
         Ok(Adapter {
+            session: 0,
             child,
             stdin,
             stdout,
@@ -116,6 +118,7 @@ impl Adapter {
             "verbatim": keep.verbatim,
             "lines": keep.lines,
             "document": document,
+            "session": self.session,
         });
         writeln!(self.stdin, "{request}").map_err(|e| format!("Lean parser stopped: {e}"))?;
         self.stdin.flush().map_err(|e| e.to_string())?;
@@ -710,16 +713,12 @@ enum Failure {
     Fatal(String),
 }
 
-fn command_trees(tree: &Value) -> &[Value] {
-    tree.get(1)
-        .and_then(|t| t.get(1))
-        .and_then(|t| t.get(1))
-        .and_then(Value::as_array)
-        .map_or(&[], Vec::as_slice)
+fn command_trees(trees: &[String]) -> &[String] {
+    trees.get(1..).unwrap_or(&[])
 }
 
 fn tree_difference(original: &Parsed, other: &Parsed, reason: &str) -> Failure {
-    let (a, b) = (command_trees(&original.tree), command_trees(&other.tree));
+    let (a, b) = (command_trees(&original.trees), command_trees(&other.trees));
     if a.len() == b.len() && !a.is_empty() {
         let all: Vec<usize> = (0..a.len()).filter(|&i| a[i] != b[i]).collect();
         if !all.is_empty() {
@@ -811,7 +810,7 @@ fn attempt(
         Some(tokens) => tokens,
         None => {
             let clean = reparse(adapter, &rendered, starts, keep, false)?;
-            if original.tree != clean.tree || original.tokens.len() != clean.tokens.len() {
+            if original.trees != clean.trees || original.tokens.len() != clean.tokens.len() {
                 return Err(tree_difference(
                     &original,
                     &clean,
@@ -826,7 +825,7 @@ fn attempt(
         restore_comments_shifted(source, &original.tokens, &rendered, &clean, &mut starts);
     let starts = Some(starts);
     let checked = reparse(adapter, &formatted, starts, keep, true)?;
-    if original.tree != checked.tree || original.tokens.len() != checked.tokens.len() {
+    if original.trees != checked.trees || original.tokens.len() != checked.tokens.len() {
         return Err(tree_difference(
             &original,
             &checked,
@@ -853,7 +852,8 @@ fn attempt(
         Some(tokens) => tokens,
         None => {
             let next_clean = reparse(adapter, &next, starts, keep, false)?;
-            if checked.tree != next_clean.tree || checked.tokens.len() != next_clean.tokens.len() {
+            if checked.trees != next_clean.trees || checked.tokens.len() != next_clean.tokens.len()
+            {
                 return Err(tree_difference(
                     &checked,
                     &next_clean,
@@ -919,7 +919,96 @@ fn escalate(
     Ok(())
 }
 
+pub fn imported_modules(source: &str) -> Option<Vec<String>> {
+    let mut modules = Vec::new();
+    let mut lines = source.lines();
+    while let Some(line) = lines.next() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("--") || line == "module" || line == "prelude" {
+            continue;
+        }
+        if line.starts_with("/-") {
+            let mut text = line.to_owned();
+            while !text.contains("-/") {
+                text = lines.next()?.to_owned();
+            }
+            continue;
+        }
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let Some(position) = words.iter().position(|w| *w == "import") else {
+            break;
+        };
+        if !words[..position]
+            .iter()
+            .all(|w| matches!(*w, "public" | "meta" | "private"))
+        {
+            break;
+        }
+        modules.extend(
+            words[position + 1..]
+                .iter()
+                .filter(|w| **w != "all")
+                .map(|w| w.to_string()),
+        );
+    }
+    Some(modules)
+}
+
+type PoolKey = (Option<std::path::PathBuf>, Vec<String>);
+
+#[derive(Default)]
+pub struct Pool {
+    adapters: Vec<(PoolKey, Adapter)>,
+    session: u64,
+    capacity: usize,
+}
+
+impl Pool {
+    pub fn with_capacity(capacity: usize) -> Pool {
+        Pool {
+            capacity,
+            ..Pool::default()
+        }
+    }
+
+    fn take(
+        &mut self,
+        project: Option<&std::path::Path>,
+        source: &str,
+    ) -> Result<(Option<PoolKey>, Adapter), String> {
+        self.session += 1;
+        let key = imported_modules(source).map(|m| (project.map(ToOwned::to_owned), m));
+        let found = key
+            .as_ref()
+            .and_then(|k| self.adapters.iter().position(|(key, _)| key == k));
+        let mut adapter = match found {
+            Some(i) => self.adapters.remove(i).1,
+            None => Adapter::start(project)?,
+        };
+        adapter.session = self.session;
+        Ok((key, adapter))
+    }
+
+    fn put(&mut self, key: Option<PoolKey>, adapter: Adapter) {
+        if let Some(key) = key {
+            self.adapters.push((key, adapter));
+            if self.adapters.len() > self.capacity.max(2) {
+                self.adapters.remove(0);
+            }
+        }
+    }
+}
+
 pub fn format_document(
+    source: &str,
+    width: usize,
+    project: Option<&std::path::Path>,
+) -> Result<Formatted, String> {
+    format_document_with(&mut Pool::default(), source, width, project)
+}
+
+pub fn format_document_with(
+    pool: &mut Pool,
     source: &str,
     width: usize,
     project: Option<&std::path::Path>,
@@ -927,11 +1016,29 @@ pub fn format_document(
     if !(20..=300).contains(&width) {
         return Err("line width must be between 20 and 300".into());
     }
-    let mut adapter = Adapter::start(project)?;
+    let (key, mut adapter) = pool.take(project, source)?;
+    let result = format_with(&mut adapter, source, width);
+    let result = match result {
+        Err(message) if message.contains("imports changed") => {
+            let mut fresh = Adapter::start(project)?;
+            fresh.session = pool.session;
+            let result = format_with(&mut fresh, source, width);
+            adapter = fresh;
+            result
+        }
+        result => result,
+    };
+    if result.is_ok() {
+        pool.put(key, adapter);
+    }
+    result
+}
+
+fn format_with(adapter: &mut Adapter, source: &str, width: usize) -> Result<Formatted, String> {
     let mut keep = Keep::default();
     let mut reasons = std::collections::HashMap::new();
     loop {
-        match attempt(&mut adapter, source, width, &keep) {
+        match attempt(adapter, source, width, &keep) {
             Ok((formatted, original)) => {
                 let line_of =
                     |start: usize| source[..start.min(source.len())].matches('\n').count() + 1;

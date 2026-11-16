@@ -30,6 +30,23 @@ enum Commands {
         #[command(subcommand)]
         command: Source,
     },
+    Daemon {
+        #[command(subcommand)]
+        command: Daemon,
+    },
+}
+#[derive(Subcommand)]
+enum Daemon {
+    /// Serve formatting requests on a Unix socket, keeping Lean processes loaded.
+    StartDaemon(DaemonOptions),
+    /// Stop a running daemon.
+    StopDaemon(DaemonOptions),
+}
+#[derive(clap::Args)]
+struct DaemonOptions {
+    /// Socket path (default: $XDG_RUNTIME_DIR/leanwisp.sock, else /tmp/leanwisp-UID.sock).
+    #[arg(long)]
+    socket: Option<PathBuf>,
 }
 #[derive(Subcommand)]
 enum Source {
@@ -74,6 +91,11 @@ struct Options {
     cache: bool,
     #[arg(long, overrides_with = "cache")]
     no_cache: bool,
+    /// Send the request to a running daemon when one is available.
+    #[arg(long, overrides_with = "no_daemon")]
+    daemon: bool,
+    #[arg(long, overrides_with = "daemon")]
+    no_daemon: bool,
 }
 
 #[derive(Deserialize)]
@@ -115,6 +137,7 @@ fn format_text(
     opts: &Options,
     source: &str,
     path: Option<&Path>,
+    pool: &mut leanwisp::Pool,
 ) -> Result<leanwisp::Formatted, String> {
     let start = path
         .and_then(Path::parent)
@@ -133,7 +156,13 @@ fn format_text(
     {
         return Ok(formatted);
     }
-    let formatted = leanwisp::format_document(source, width, project.as_deref())?;
+    let formatted = match (!opts.no_daemon && opts.input.paths.is_none())
+        .then(|| ask_daemon(&socket_path(None), source, width, project.as_deref()))
+        .flatten()
+    {
+        Some(result) => result?,
+        None => leanwisp::format_document_with(pool, source, width, project.as_deref())?,
+    };
     if let Some(key) = key
         && let Some(dir) = key.parent()
         && std::fs::create_dir_all(dir).is_ok()
@@ -160,39 +189,22 @@ fn fnv(hash: &mut u64, bytes: &[u8]) {
     *hash = hash.wrapping_mul(0x100000001b3);
 }
 
-fn imported_modules(source: &str) -> Option<Vec<String>> {
-    let mut modules = Vec::new();
-    let mut lines = source.lines();
-    while let Some(line) = lines.next() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with("--") || line == "module" || line == "prelude" {
-            continue;
-        }
-        if line.starts_with("/-") {
-            let mut text = line.to_owned();
-            while !text.contains("-/") {
-                text = lines.next()?.to_owned();
-            }
-            continue;
-        }
-        let words: Vec<&str> = line.split_whitespace().collect();
-        let Some(position) = words.iter().position(|w| *w == "import") else {
-            break;
-        };
-        if !words[..position]
-            .iter()
-            .all(|w| matches!(*w, "public" | "meta" | "private"))
-        {
-            break;
-        }
-        modules.extend(
-            words[position + 1..]
-                .iter()
-                .filter(|w| **w != "all")
-                .map(|w| w.to_string()),
-        );
+fn lean_path(dir: &Path) -> Option<String> {
+    static PATHS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, String>>,
+    > = std::sync::OnceLock::new();
+    let paths = PATHS.get_or_init(Default::default);
+    if let Some(path) = paths.lock().ok()?.get(dir) {
+        return Some(path.clone());
     }
-    Some(modules)
+    let output = std::process::Command::new("lake")
+        .args(["env", "printenv", "LEAN_PATH"])
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    let path = String::from_utf8(output.stdout).ok()?;
+    paths.lock().ok()?.insert(dir.to_owned(), path.clone());
+    Some(path)
 }
 
 fn cache_key(source: &str, width: usize, project: Option<&Path>) -> Option<PathBuf> {
@@ -211,17 +223,10 @@ fn cache_key(source: &str, width: usize, project: Option<&Path>) -> Option<PathB
     fnv(&mut hash, &width.to_le_bytes());
     fnv(&mut hash, source.as_bytes());
     let search = match project {
-        Some(dir) => {
-            let output = std::process::Command::new("lake")
-                .args(["env", "printenv", "LEAN_PATH"])
-                .current_dir(dir)
-                .output()
-                .ok()?;
-            String::from_utf8(output.stdout).ok()?
-        }
+        Some(dir) => lean_path(dir)?,
         None => std::env::var("LEAN_PATH").unwrap_or_default(),
     };
-    for module in imported_modules(source)? {
+    for module in leanwisp::imported_modules(source)? {
         let relative: PathBuf = module
             .split('.')
             .collect::<PathBuf>()
@@ -245,7 +250,7 @@ fn cache_key(source: &str, width: usize, project: Option<&Path>) -> Option<PathB
     Some(root.join(format!("{hash:016x}.json")))
 }
 
-fn format_file(opts: &Options, path: &Path) -> Report {
+fn format_file(opts: &Options, path: &Path, pool: &mut leanwisp::Pool) -> Report {
     let mut report = Report {
         path: Some(path.to_owned()),
         changed: false,
@@ -258,7 +263,7 @@ fn format_file(opts: &Options, path: &Path) -> Report {
             return Err("refusing a symlink input".to_owned());
         }
         let source = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-        let formatted = format_text(opts, &source, Some(path))?;
+        let formatted = format_text(opts, &source, Some(path), pool)?;
         report.changed = source != formatted.source;
         report.kept = formatted.kept;
         report.source = formatted.source;
@@ -311,6 +316,16 @@ fn lean_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
 
 fn run_paths(opts: &Options, paths: &[PathBuf]) -> Result<Vec<Report>, String> {
     let files = lean_files(paths)?;
+    let mut groups: std::collections::BTreeMap<Option<Vec<String>>, Vec<usize>> =
+        Default::default();
+    for (i, file) in files.iter().enumerate() {
+        let key = std::fs::read_to_string(file)
+            .ok()
+            .and_then(|s| leanwisp::imported_modules(&s));
+        groups.entry(key).or_default().push(i);
+    }
+    let mut groups: Vec<Vec<usize>> = groups.into_values().collect();
+    groups.sort_by_key(|g| std::cmp::Reverse(g.len()));
     let next = std::sync::atomic::AtomicUsize::new(0);
     let reports = std::sync::Mutex::new(Vec::new());
     std::thread::scope(|scope| {
@@ -318,14 +333,17 @@ fn run_paths(opts: &Options, paths: &[PathBuf]) -> Result<Vec<Report>, String> {
             .jobs
             .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, usize::from))
             .clamp(1, 64)
-            .min(files.len().max(1))
+            .min(groups.len().max(1))
         {
             scope.spawn(|| {
+                let mut pool = leanwisp::Pool::default();
                 loop {
-                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let Some(file) = files.get(i) else { break };
-                    let report = format_file(opts, file);
-                    reports.lock().unwrap().push((i, report));
+                    let g = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(group) = groups.get(g) else { break };
+                    for &i in group {
+                        let report = format_file(opts, &files[i], &mut pool);
+                        reports.lock().unwrap().push((i, report));
+                    }
                 }
             });
         }
@@ -364,9 +382,100 @@ fn warn_kept(report: &Report) {
     }
 }
 
+fn socket_path(socket: Option<&Path>) -> PathBuf {
+    if let Some(socket) = socket {
+        return socket.to_owned();
+    }
+    match std::env::var_os("XDG_RUNTIME_DIR") {
+        Some(dir) => PathBuf::from(dir).join("leanwisp.sock"),
+        None => PathBuf::from(format!("/tmp/leanwisp-{}.sock", unsafe { libc::getuid() })),
+    }
+}
+
+fn ask_daemon(
+    socket: &Path,
+    source: &str,
+    width: usize,
+    project: Option<&Path>,
+) -> Option<Result<leanwisp::Formatted, String>> {
+    use std::io::BufRead;
+    let mut stream = std::os::unix::net::UnixStream::connect(socket).ok()?;
+    let request = json!({
+        "Source": source,
+        "Width": width,
+        "Project": project,
+        "Version": env!("CARGO_PKG_VERSION"),
+        "Syntax": std::env::var("LEANWISP_SYNTAX").unwrap_or_default(),
+    });
+    writeln!(stream, "{request}").ok()?;
+    let mut line = String::new();
+    std::io::BufReader::new(&stream).read_line(&mut line).ok()?;
+    let response: serde_json::Value = serde_json::from_str(&line).ok()?;
+    if let Some(error) = response.get("Error").and_then(serde_json::Value::as_str) {
+        return Some(Err(error.to_owned()));
+    }
+    Some(serde_json::from_value(response).map_err(|e| e.to_string()))
+}
+
+fn run_daemon(command: Daemon) -> Result<i32, String> {
+    use std::io::BufRead;
+    let (Daemon::StartDaemon(opts) | Daemon::StopDaemon(opts)) = &command;
+    let socket = socket_path(opts.socket.as_deref());
+    if let Daemon::StopDaemon(_) = command {
+        let mut stream = std::os::unix::net::UnixStream::connect(&socket)
+            .map_err(|e| format!("{}: {e}", socket.display()))?;
+        writeln!(stream, "{}", json!({"Stop": true})).map_err(|e| e.to_string())?;
+        println!("{}", json!({"Socket": socket, "Stopped": true}));
+        return Ok(0);
+    }
+    if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+        return Err(format!("{}: a daemon is already running", socket.display()));
+    }
+    let _ = std::fs::remove_file(&socket);
+    let listener = std::os::unix::net::UnixListener::bind(&socket)
+        .map_err(|e| format!("{}: {e}", socket.display()))?;
+    println!("{}", json!({"Socket": socket}));
+    let mut pool = leanwisp::Pool::with_capacity(4);
+    for stream in listener.incoming() {
+        let Ok(mut stream) = stream else { continue };
+        let mut line = String::new();
+        if std::io::BufReader::new(&stream)
+            .read_line(&mut line)
+            .is_err()
+        {
+            continue;
+        }
+        let Ok(request) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        if request.get("Stop").is_some() {
+            break;
+        }
+        if request["Version"] != env!("CARGO_PKG_VERSION")
+            || request["Syntax"] != std::env::var("LEANWISP_SYNTAX").unwrap_or_default()
+        {
+            continue;
+        }
+        let source = request["Source"].as_str().unwrap_or_default();
+        let width = request["Width"].as_u64().unwrap_or(100) as usize;
+        let project = request["Project"].as_str().map(PathBuf::from);
+        let response =
+            match leanwisp::format_document_with(&mut pool, source, width, project.as_deref()) {
+                Ok(formatted) => serde_json::to_value(formatted).unwrap_or_default(),
+                Err(error) => json!({ "Error": error }),
+            };
+        let _ = writeln!(stream, "{response}");
+    }
+    let _ = std::fs::remove_file(&socket);
+    Ok(0)
+}
+
 fn run(cli: Cli) -> Result<i32, String> {
-    let Commands::Source { command } = cli.command;
     leanwisp::DEBUG.store(cli.debug, std::sync::atomic::Ordering::Relaxed);
+    let command = match cli.command {
+        Commands::Source { command } => command,
+        Commands::Daemon { command } => return run_daemon(command),
+    };
     let check = matches!(command, Source::CheckSource(_));
     let (Source::FormatSource(opts) | Source::CheckSource(opts)) = command;
     if opts.write && (check || opts.input.source.is_some()) {
@@ -417,7 +526,7 @@ fn run(cli: Cli) -> Result<i32, String> {
         return Ok(if failed || (check && changed) { 254 } else { 0 });
     }
     let report = if let Some(path) = &opts.input.file {
-        format_file(&opts, path)
+        format_file(&opts, path, &mut leanwisp::Pool::default())
     } else {
         let value = opts.input.source.clone().unwrap_or_default();
         let source = if value == "file:///dev/stdin" {
@@ -431,7 +540,7 @@ fn run(cli: Cli) -> Result<i32, String> {
         } else {
             value
         };
-        let formatted = format_text(&opts, &source, None)?;
+        let formatted = format_text(&opts, &source, None, &mut leanwisp::Pool::default())?;
         Report {
             path: None,
             changed: source != formatted.source,
