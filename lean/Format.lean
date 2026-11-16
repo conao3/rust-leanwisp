@@ -9,11 +9,12 @@ def markScale : Nat := 2 ^ 48
 def markDeclEq : Nat := 1
 def markAttrClose : Nat := 2
 def markWhere : Nat := 3
-def markSigColon : Nat := 4
-def markBinder : Nat := 5
+def markAlternative : Nat := 4
 def breakTagBase : Nat := 2 ^ 67
 def blockBreakTag : Nat := 2 ^ 68
 def commandTagBase : Nat := 2 ^ 69
+def attrLineTag : Nat := 2 ^ 70
+def softBlockTag : Nat := 2 ^ 70 + 1
 
 partial def fingerprint : Syntax → Json
   | .missing => toJson ("missing" : String)
@@ -30,7 +31,9 @@ partial def document : Std.Format → Json
   | .append a b => Json.arr #[toJson "append", document a, document b]
   | .group child behavior => Json.arr #[toJson "group", document child,
       toJson (behavior == .fill)]
-  | .tag tag child => if tag >= commandTagBase then Json.arr #[toJson "command", toJson (tag - commandTagBase)]
+  | .tag tag child => if tag == attrLineTag then Json.arr #[toJson "attrline"]
+      else if tag == softBlockTag then Json.arr #[toJson "softblock"]
+      else if tag >= commandTagBase then Json.arr #[toJson "command", toJson (tag - commandTagBase)]
       else if tag >= blockBreakTag then Json.arr #[toJson "block", toJson ((tag - blockBreakTag : Int) - 64)]
       else if breakTagBase <= tag then Json.arr #[toJson "break", toJson ((tag - breakTagBase : Int) - 64)]
       else document child
@@ -59,26 +62,14 @@ def markAtom (code : Nat) : Syntax → Syntax
       .atom (.synthetic ⟨markBase + code * markScale + (pos.byteIdx - lexemeTagBase)⟩ tail) value
   | stx => stx
 
-def markFirstAtom (code : Nat) (stx : Syntax) : Syntax :=
-  if stx.getNumArgs > 0 && stx[0].isAtom then stx.setArg 0 (markAtom code stx[0]) else stx
-
-def markSignature (binders : Syntax) (typeSpec : Syntax) : Syntax × Syntax :=
-  (binders.setArgs (binders.getArgs.map (markFirstAtom markBinder)),
-    markFirstAtom markSigColon typeSpec)
-
 def markLayout (kind : SyntaxNodeKind) (args : Array Syntax) : Array Syntax :=
   if kind == `Lean.Parser.Command.declValSimple || kind == `Lean.Parser.Command.whereStructInst then
     args.modify 0 (markAtom (if kind == `Lean.Parser.Command.whereStructInst then markWhere else markDeclEq))
   else if kind == `Lean.Parser.Term.attributes && args.size == 3 then
     args.modify 2 (markAtom markAttrClose)
-  else if kind == `Lean.Parser.Command.declSig && args.size == 2 then
-    let (binders, typeSpec) := markSignature args[0]! args[1]!
-    #[binders, typeSpec]
-  else if kind == `Lean.Parser.Command.optDeclSig && args.size == 2 && args[1]!.getNumArgs == 1 then
-    let (binders, typeSpec) := markSignature args[0]! args[1]![0]!
-    #[binders, args[1]!.setArg 0 typeSpec]
-  else if kind == `Lean.Parser.Command.optDeclSig && args.size == 2 then
-    #[(markSignature args[0]! .missing).1, args[1]!]
+  else if kind == `Lean.Parser.Tactic.first && args.size == 2 then
+    args.modify 1 fun alts => alts.setArgs (alts.getArgs.map fun alt =>
+      if alt.getNumArgs > 0 then alt.setArg 0 (markAtom markAlternative alt[0]) else alt)
   else args
 
 -- Keep trivia out of width/indentation groups. Rust restores comment-bearing gaps
@@ -246,7 +237,9 @@ def lineIndent (bytes : ByteArray) (pos : Nat) : Int := Id.run do
   while stop < bytes.size && bytes.get! stop == 32 do stop := stop + 1
   return stop - start
 
-def breakingTokens : List String := [":=", "=>", "↦", "<|", "<;>", "by"]
+def tacticKeywords : List String :=
+  ["·", "exact", "refine", "refine'", "apply", "use", "exists", "show", "calc", "obtain", "rcases",
+    "rintro", "intro", "simpa", "convert", "trans", "change", "specialize", "unfold"]
 
 structure Token where
   code : Nat
@@ -320,59 +313,36 @@ def layoutReplacements (source : String) (lengths : Std.HashMap Nat Nat) (conser
     return result
   for i in [0:tokens.size] do
     let token := tokens[i]!
-    let following := tokens[i + 1]?
-    let sourceBreak := following.any (breakBetween token)
     if token.code == markDeclEq then
       if let some j := next token.leaf then
-        if sourceBreak && leaves[j]! matches .line then result := result.insert j (.text "\n")
-        if !sourceBreak && isHardBreak leaves[j]! then result := result.insert j .line
-        decided := decided.insert j
+        if isHardBreak leaves[j]! then result := result.insert j .line
     else if token.code == markAttrClose then
       if let some j := next token.leaf then
-        if isHardBreak leaves[j]! && sourceBreak then
-          decided := decided.insert j
-        else if isSpace leaves[j]! then
-          result := result.insert j (if sourceBreak then .nest (-2) (.text "\n") else .text " ")
-          decided := decided.insert j
+        if isHardBreak leaves[j]! then result := result.insert j (.tag attrLineTag .nil)
+        else if isSpace leaves[j]! then result := result.insert j (.nest (-2) (.tag attrLineTag .nil))
     else if token.code == markWhere then
       if let some j := prev token.leaf then
         if leaves[j]! matches .line then result := result.insert j (.text " ")
       if let some j := next token.leaf then
-        if sourceBreak && leaves[j]! matches .line then result := result.insert j (.text "\n")
-        decided := decided.insert j
-    else if token.code == markSigColon && sourceBreak then
-      if let some j := next token.leaf then
-        if leaves[j]! matches .line then
-          result := result.insert j (.text "\n")
-          decided := decided.insert j
-    else if token.code == markBinder && i > 0 && breakBetween tokens[i - 1]! token then
+        if leaves[j]! matches .line then result := result.insert j (.text "\n")
+    else if token.code == markAlternative then
       if let some j := prev token.leaf then
-        if leaves[j]! matches .line then
-          result := result.insert j (.text "\n")
-          decided := decided.insert j
+        if isHardBreak leaves[j]! then result := result.insert j .line
   for i in [1:tokens.size] do
     let (before, after) := (tokens[i - 1]!, tokens[i]!)
-    if !breakBetween before after then continue
-    let range := (List.range (after.leaf - before.leaf)).map (before.leaf + ·)
-    if text before == "by" || text before == "do" then
-      if let some j := range.find? (fun j => leaves[j]! matches .align _ || leaves[j]! matches .line || isHardBreak leaves[j]!) then
-        if !result.contains j && !decided.contains j then
-          result := result.insert j (blockAt before after)
-          continue
-    if range.any (fun j => isHardBreak leaves[j]! || result.contains j || decided.contains j) then
-      continue
-    let breaking := breakingTokens.contains (text before)
-    if let some j := range.reverse.find? (fun j => leaves[j]! matches .line && (fills[j]! || breaking)) then
-      result := result.insert j (breakAt before after)
-  for i in [1:tokens.size] do
-    let (before, after) := (tokens[i - 1]!, tokens[i]!)
-    if breakBetween before after then continue
-    let spaced := (List.range (after.leaf - before.leaf)).any fun k =>
-      let j := before.leaf + k
-      !isHardBreak leaves[j]! && isSpace leaves[j]!
     for j in [before.leaf:after.leaf] do
-      if isHardBreak leaves[j]! && !decided.contains j && !result.contains j then
-        result := result.insert j (if spaced then .nil else .text " ")
+      if result.contains j then continue
+      if text before == "by" || text before == "do" then
+        if leaves[j]! matches .align _ || isHardBreak leaves[j]! then
+          result := result.insert j (.tag (blockBreakTag + 66) (.text "\n"))
+        else if leaves[j]! matches .line then
+          result := result.insert j (.tag softBlockTag .nil)
+      else if text before == ";" && isHardBreak leaves[j]! then
+        result := result.insert j .line
+      else if text before == "{" && leaves[j]! matches .align _ then
+        result := result.insert j (.text " ")
+      else if tacticKeywords.contains (text before) && leaves[j]! matches .line then
+        result := result.insert j (.text " ")
   return result
 
 partial def applyReplacements (result : Std.HashMap Nat Std.Format) :

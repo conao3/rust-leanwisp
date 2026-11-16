@@ -111,6 +111,17 @@ def call(args, timeout=120):
         }
 
 
+LINT = "-Dweak.linter.mathlibStandardSet=true"
+
+
+def lint_warnings(proc):
+    return [
+        line.split(": warning: ", 1)[1]
+        for line in proc["Stdout"].splitlines()
+        if ": warning: " in line
+    ]
+
+
 def work(path):
     rel = path.relative_to(ROOT)
     log = OUT / "logs" / rel.with_suffix("")
@@ -118,8 +129,9 @@ def work(path):
     before = path.read_bytes()
     sha = hashlib.sha256(before).hexdigest()
     result = {"Path": str(rel), "Bytes": len(before), "OriginalSHA256": sha}
-    baseline = call(["lake", "env", "lean", "--root=" + str(ROOT), str(path)])
+    baseline = call(["lake", "env", "lean", LINT, "--root=" + str(ROOT), str(path)])
     result["Baseline"] = baseline
+    result["LintBefore"] = lint_warnings(baseline)
     proc = call(
         [
             BIN,
@@ -150,8 +162,9 @@ def work(path):
             if not line.startswith("@@")
         )
         result["Compile"] = call(
-            ["lake", "env", "lean", "--root=" + str(OUT / "formatted"), str(dest)]
+            ["lake", "env", "lean", LINT, "--root=" + str(OUT / "formatted"), str(dest)]
         )
+        result["LintAfter"] = lint_warnings(result["Compile"])
         again = call(
             [
                 BIN,
@@ -188,6 +201,8 @@ def work(path):
                 "Idempotent": result.get("Idempotent"),
                 "ChangedLines": result.get("ChangedLines"),
                 "Kept": len(result.get("Kept", [])),
+                "LintBefore": len(result["LintBefore"]),
+                "LintAfter": len(result.get("LintAfter", [])),
             },
             ensure_ascii=False,
         ),
@@ -210,6 +225,8 @@ print(
             "ChangedLines": sum(x.get("ChangedLines", 0) for x in results),
             "SourceLines": sum(x.get("LinesBefore", 0) for x in results),
             "KeptCommands": sum(len(x.get("Kept", [])) for x in results),
+            "LintBefore": sum(len(x["LintBefore"]) for x in results),
+            "LintAfter": sum(len(x.get("LintAfter", [])) for x in results),
         }
     ),
     flush=True,
@@ -223,6 +240,7 @@ raise SystemExit(
         and x.get("Compile", {}).get("Code") == 0
         and x.get("Idempotent")
         and not x.get("Kept")
+        and len(x.get("LintAfter", [])) <= len(x["LintBefore"])
         and x["OriginalUnchanged"]
         for x in results
     )

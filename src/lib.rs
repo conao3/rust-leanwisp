@@ -149,7 +149,9 @@ fn attach_block_introducers(doc: &mut Value) {
             "nest" => leaves(&doc[2], format!("{path}/2"), result),
             "group" => leaves(&doc[1], format!("{path}/1"), result),
             "text" => result.push((path, doc[1].as_str().unwrap_or("").to_owned())),
-            "line" | "align" | "break" | "block" => result.push((path, String::new())),
+            "line" | "align" | "break" | "block" | "softblock" | "attrline" => {
+                result.push((path, String::new()))
+            }
             _ => {}
         }
     }
@@ -160,7 +162,12 @@ fn attach_block_introducers(doc: &mut Value) {
         if text.trim().is_empty() {
             continue;
         }
-        if matches!(text.as_str(), "by" | "do")
+        let run_do = text == "Id.run"
+            && items[i + 1..]
+                .iter()
+                .find(|(_, t)| !t.trim().is_empty())
+                .is_some_and(|(_, t)| t.trim() == "do");
+        if (run_do || matches!(text.as_str(), "by" | "do"))
             && let Some(j) = previous
         {
             let (prev_path, prev_text): &(String, String) = &items[j];
@@ -197,6 +204,7 @@ struct Group<'a> {
 struct Space {
     line: bool,
     hard: bool,
+    end: bool,
     size: usize,
 }
 fn tag(doc: &Value) -> &str {
@@ -211,17 +219,23 @@ fn measure(doc: &Value, flat: bool, margin: i64, width: usize) -> Space {
                 line,
                 hard: flat && line,
                 size: s.split('\n').next().unwrap_or("").chars().count(),
+                ..Space::default()
             }
         }
-        "line" => Space {
+        "command" => Space {
+            line: true,
+            end: true,
+            ..Space::default()
+        },
+        "line" | "softblock" | "attrline" => Space {
             line: !flat,
             size: usize::from(flat),
             ..Space::default()
         },
         "break" | "block" => Space {
             line: true,
-            hard: flat,
-            size: 0,
+            hard: flat && tag(doc) == "break",
+            ..Space::default()
         },
         "align" if !flat || doc[1].as_bool().unwrap_or(false) => {
             if (width as i64) > margin {
@@ -285,7 +299,7 @@ fn regroup<'a>(mut g: Group<'a>, groups: &mut Vec<Group<'a>>, col: usize, width:
     } else {
         r.size + measure_groups(groups, col, w - r.size).size
     };
-    g.flat = Some((g.fill || !r.hard) && total <= w);
+    g.flat = Some(!r.hard && total <= w);
     groups.push(g);
 }
 /// Render Lean's all-or-none and fill groups, measuring their remaining context.
@@ -367,8 +381,26 @@ fn render_marked(doc: &Value, width: usize) -> (String, Vec<usize>) {
                     }
                 }
             }
-            "line" => {
+            "line" | "softblock" | "attrline" => {
                 let mut flat = g.flat == Some(true);
+                if tag(d) == "attrline" {
+                    let rest = std::iter::once(&g).chain(groups.iter().rev());
+                    let mut room = width as i64 - col.max(pending) as i64 - 1;
+                    flat = true;
+                    'measure: for group in rest {
+                        for item in group.items.iter().rev() {
+                            let r = measure(item.doc, true, i64::MAX / 4, room.max(0) as usize);
+                            room -= r.size as i64;
+                            if r.hard || room < 0 || (r.line && !r.end) {
+                                flat = false;
+                                break 'measure;
+                            }
+                            if r.line {
+                                break 'measure;
+                            }
+                        }
+                    }
+                }
                 if g.fill && flat {
                     let mut trial = groups.clone();
                     regroup(
@@ -393,7 +425,15 @@ fn render_marked(doc: &Value, width: usize) -> (String, Vec<usize>) {
                 } else {
                     push_newline(&mut out);
                     col = 0;
-                    pending = i.indent.max(0) as usize;
+                    let base = out
+                        .rsplit('\n')
+                        .nth(1)
+                        .map_or(0, |l| l.len() - l.trim_start_matches(' ').len());
+                    pending = if tag(d) == "softblock" {
+                        (i.indent.max(0) as usize).min(base + 2)
+                    } else {
+                        i.indent.max(0) as usize
+                    };
                     explicit = false;
                     if g.fill {
                         regroup(g, &mut groups, pending, width);
@@ -690,12 +730,19 @@ fn reparse(
     project: Option<&std::path::Path>,
     keep: &Keep,
 ) -> Result<Parsed, Failure> {
-    parse(text, project, keep).map_err(|message| match (starts, error_offset(text, &message)) {
-        (Some(starts), Some(offset)) => Failure::Command(
-            command_at(&starts, offset),
-            "formatted text does not parse".into(),
-        ),
-        _ => Failure::Fatal(message),
+    parse(text, project, keep).map_err(|message| {
+        trace(|| {
+            let line = error_offset(text, &message).map_or(0, |o| text[..o].matches('\n').count());
+            let context: Vec<_> = text.lines().skip(line.saturating_sub(3)).take(6).collect();
+            format!("reparse failed: {message}\n{}", context.join("\n"))
+        });
+        match (starts, error_offset(text, &message)) {
+            (Some(starts), Some(offset)) => Failure::Command(
+                command_at(&starts, offset),
+                "formatted text does not parse".into(),
+            ),
+            _ => Failure::Fatal(message),
+        }
     })
 }
 

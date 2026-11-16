@@ -1,7 +1,7 @@
 # Leanwisp
 
 A Lean 4 source formatter with a Rust layout engine. Leanwisp normalizes spacing,
-indentation and line wrapping while keeping the line structure an author chose.
+indentation and line wrapping into one canonical layout.
 It supports Lean 4.35.0, standard library and Lake dependency imports (Mathlib
 included), and local notation, macro and elab declarations.
 
@@ -35,23 +35,30 @@ theorem double_eq (n : Nat) : double n = n + n := by
 
 ## Layout
 
-Leanwisp lays out each command with Lean's own formatter document and then applies
-these rules:
+The output depends only on the syntax and the line width, not on how the input
+was broken into lines. The rules follow Lean's
+[standard library style](https://github.com/leanprover/lean4/blob/master/doc/std/style.md)
+and the [Mathlib style guidelines](https://mathlib.org/contribute/style.html).
+Where both allow alternatives, Leanwisp picks one:
 
 - Spacing around tokens, binders, operators and `:`/`:=` is normalized
   (`(3: Nat)+4` becomes `(3 : Nat) + 4`).
-- A line break the source has after `:=`, `=>`, `↦`, `<|`, `<;>`, `by` or `do`,
-  after a signature's `:`, between binders, and inside wrapping argument lists is
-  kept. Breaks Leanwisp adds are only those needed for `--line-width`.
-- Code the source keeps on one line stays joined where Lean's formatter would
-  force a break: a short body after `:=`, `@[simp] theorem`, `first | a | b`,
-  `(haveI := h; e)`. `instance ... where` keeps `where` on the declaration line.
-- Proof and `do` blocks are indented two columns from the start of their
-  declaration or statement; inductive constructors, structure fields, match
-  arms and bullets get canonical indentation. Lines kept from the source keep
-  their indentation relative to the previous line (at most four columns deeper).
-- Between commands, zero or one blank line is kept as written; two or more
-  become one. Files end with one newline.
+- Lines are filled up to `--line-width` (default 100). A function application
+  wraps at argument boundaries, an infix operator stays at the end of the line,
+  and continuation lines are indented.
+- Declarations are flush-left. A header that does not fit continues on lines
+  indented four columns, with `:` at the end of a line. A body that fits stays on
+  the `:=` line; otherwise it starts on the next line, indented two columns.
+- Attributes stay on the declaration line when the whole declaration fits on one
+  line, and go on their own line otherwise.
+- `by`, `do` and `Id.run do` end the line, and their block is indented two
+  columns from the start of the declaration or statement. A tactic block that
+  fits stays on one line (`:= by simp`, `first | a | b`, `t <;> u`).
+- `instance ... where` keeps `where` on the declaration line and puts each field
+  on its own line, indented two columns. Inductive constructors, match arms,
+  bullets and `if`/`else if`/`else` chains use the indentation of the guides.
+- Between commands, zero or one blank line is kept; two or more become one.
+  Blank lines inside a declaration are removed. Files end with one newline.
 - Comments, string and character literals, identifiers and operator spellings
   (`>=`, `Prop.exists`) are kept as written.
 
@@ -64,7 +71,9 @@ Validation is per command. When a command cannot be laid out safely, Leanwisp
 first keeps its line breaks from the source and only normalizes spacing and
 indentation within lines (`line-breaks`). If that still fails, or if Lean has no
 formatter for the command's syntax, the command keeps its source text
-(`source`). The rest of the file is formatted. Each such command is listed:
+(`source`). These fallbacks are the only cases in which the output follows the
+input's line breaks. The rest of the file is formatted. Each such command is
+listed:
 
 ```text
 Example.lean:12: kept source: Unknown constant `term.pseudo.antiquot`
@@ -145,7 +154,8 @@ source.
 
 Mathlib compatibility is tracked with a read-only, repeatable sample check in
 [docs/mathlib-evaluation.md](docs/mathlib-evaluation.md). It records compilation,
-idempotence, changed lines, kept commands and source hashes.
+idempotence, Mathlib's style linter warnings before and after formatting, changed
+lines, kept commands and source hashes.
 `tools/check-mathlib.py --help` describes the check inputs.
 
 Apache-2.0. Leanwisp uses the Lean parser/formatter APIs pinned by `flake.lock`.

@@ -90,7 +90,7 @@ fn invalid_input_is_rejected() {
 fn canonical_golden() {
     assert_eq!(
         stable("def double(n:Nat):Nat:=n+n\ndef answer:Nat:=\n  42", 100),
-        "def double (n : Nat) : Nat := n + n\ndef answer : Nat :=\n  42\n"
+        "def double (n : Nat) : Nat := n + n\ndef answer : Nat := 42\n"
     );
 }
 
@@ -345,34 +345,85 @@ fn preserve_ascii_operator_spelling() {
 }
 
 #[test]
-fn source_line_breaks_are_kept() {
-    unchanged(
-        "theorem foo (h : 1 < 2) :\n    1 < 2 := by\n  exact h\n\ntheorem bar (a b : Nat) : a + b = b + a :=\n  Nat.add_comm a b\n\ndef id' (n : Nat) : Nat :=\n  (fun x ↦ x) n\n",
+fn layout_does_not_depend_on_source_line_breaks() {
+    let canonical = "theorem bar (a b : Nat) : a + b = b + a := Nat.add_comm a b\n";
+    for source in [
+        "theorem bar (a b : Nat) :\n    a + b = b + a :=\n  Nat.add_comm a b\n",
+        "theorem bar (a b : Nat) : a + b = b + a :=\n  Nat.add_comm\n    a b\n",
+        canonical,
+    ] {
+        assert_eq!(stable(source, 100), canonical);
+    }
+    let proof = "example (p : Prop) (hp : p) : p ∧ p := by constructor <;> exact hp\n";
+    assert_eq!(
+        stable(
+            "example (p : Prop) (hp : p) : p ∧ p := by\n  constructor <;>\n  exact hp\n",
+            100
+        ),
+        proof
     );
-    unchanged("example (p : Prop) (hp : p) : p ∧ p := by\n  constructor <;>\n  exact hp\n");
+    let wide = stable(
+        "theorem foo (h : 1 < 2) :\n    1 < 2 := by\n      exact h\n",
+        100,
+    );
+    assert_eq!(wide, "theorem foo (h : 1 < 2) : 1 < 2 := by exact h\n");
 }
 
 #[test]
-fn attributes_and_where_follow_the_source() {
-    unchanged("@[simp] theorem one : 1 = 1 := rfl\n\n@[simp]\ntheorem two : 2 = 2 := rfl\n");
-    let result = stable(
-        "structure Point where\n  x : Nat\n  y : Nat\ninstance : Inhabited Point\n    where\n  default := ⟨0, 0⟩\n",
+fn style_guide_declarations() {
+    assert_eq!(
+        stable("@[simp] theorem two : 2 = 2 := by\n  skip\n  rfl\n", 100),
+        "@[simp]\ntheorem two : 2 = 2 := by\n  skip\n  rfl\n"
+    );
+    assert_eq!(
+        stable("@[simp]\ntheorem one : 1 = 1 := rfl\n", 100),
+        "@[simp] theorem one : 1 = 1 := rfl\n"
+    );
+    let long = stable(
+        "@[simp] theorem two (a b c d e f g h : Nat) (h1 : a + b + c + d = e + f + g + h) : a + b + c + d = e + f + g + h := h1\n",
+        100,
+    );
+    assert_eq!(
+        long,
+        "@[simp]\ntheorem two (a b c d e f g h : Nat) (h1 : a + b + c + d = e + f + g + h) :\n    a + b + c + d = e + f + g + h := h1\n"
+    );
+    let proof = stable(
+        "theorem some_very_long_theorem_name_here (a b : Nat) : a + b = b + a ∧ b + a = a + b ∧ True := by exact ⟨Nat.add_comm a b, Nat.add_comm b a, trivial⟩\n",
         100,
     );
     assert!(
-        result.contains("instance : Inhabited Point where\n  default := ⟨0, 0⟩"),
-        "{result}"
+        proof.ends_with(":= by\n  exact ⟨Nat.add_comm a b, Nat.add_comm b a, trivial⟩\n"),
+        "{proof}"
+    );
+    assert_eq!(
+        stable("instance : Inhabited Nat where default := 0\n", 100),
+        "instance : Inhabited Nat where\n  default := 0\n"
     );
 }
 
 #[test]
-fn declarations_blocks_and_chains() {
-    unchanged(
-        "def f (k : Nat) (args : Array Nat) : Array Nat :=\n  if k == 1 then\n    args\n  else if k == 2 then\n    let (a, b) := (args[0]!, args[1]!)\n    #[a, b]\n  else args\n",
-    );
+fn style_guide_blocks() {
     unchanged("def g (n : Nat) : Nat := Id.run do\n  let mut x := n\n  x := x + 1\n  return x\n");
+    assert_eq!(
+        stable(
+            "def g (n : Nat) : Nat :=\n  Id.run do\n      let x := n\n      return x\n",
+            100
+        ),
+        "def g (n : Nat) : Nat := Id.run do\n  let x := n\n  return x\n"
+    );
+    unchanged(
+        "def f (k : Nat) (args : Array Nat) : Array Nat :=\n  if k == 1 then args\n  else if k == 2 then\n    let (a, b) := (args[0]!, args[1]!)\n    #[a, b]\n  else args\n",
+    );
     unchanged("inductive Color where\n  | red\n  | green\n  deriving Repr\n");
     unchanged("def empty : List Nat := {}\n");
+    assert_eq!(
+        stable(
+            "example : True := by\n  first\n  | trivial\n  | simp\n",
+            100
+        ),
+        "example : True := by first | trivial | simp\n"
+    );
+    unchanged("example (a : Nat) : (haveI := a; a) = a := rfl\n");
 }
 
 #[test]
