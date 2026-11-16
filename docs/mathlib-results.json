@@ -1,14 +1,16 @@
 {
   "MathlibCommit": "56a005855ea17e0b0958f73ec801ae140b0a1679",
   "LeanVersion": "4.35.0",
+  "FormatterCommit": "fcb6459",
   "LineWidth": 100,
-  "FormatterCommit": "0914ff8",
   "SampleSize": 31,
   "FormatOK": 31,
   "CompileOK": 31,
   "Idempotent": 31,
+  "LintBefore": 0,
+  "LintAfter": 0,
   "SourceLines": 9998,
-  "ChangedLines": 447,
+  "ChangedLines": 3351,
   "Over100Before": 3,
   "Over100After": 3,
   "Results": [
@@ -21,11 +23,24 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 1080,
-      "ChangedLines": 47,
+      "ChangedLines": 290,
       "Over100Before": 1,
       "Over100After": 1,
-      "Kept": []
+      "Kept": [
+        {
+          "Kept": "line-breaks",
+          "Line": 37,
+          "Reason": "formatting would change the Lean syntax tree"
+        },
+        {
+          "Kept": "line-breaks",
+          "Line": 70,
+          "Reason": "formatting would change the Lean syntax tree"
+        }
+      ]
     },
     {
       "Path": "Mathlib/Data/Nat/Basic.lean",
@@ -36,8 +51,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 168,
-      "ChangedLines": 9,
+      "ChangedLines": 33,
       "Over100Before": 1,
       "Over100After": 1,
       "Kept": []
@@ -51,11 +68,24 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 1099,
-      "ChangedLines": 29,
+      "ChangedLines": 489,
       "Over100Before": 0,
       "Over100After": 0,
-      "Kept": []
+      "Kept": [
+        {
+          "Kept": "source",
+          "Line": 1080,
+          "Reason": "formatted text does not parse"
+        },
+        {
+          "Kept": "source",
+          "Line": 1087,
+          "Reason": "formatted text does not parse"
+        }
+      ]
     },
     {
       "Path": "Mathlib/Data/List/Basic.lean",
@@ -66,8 +96,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 1194,
-      "ChangedLines": 25,
+      "ChangedLines": 378,
       "Over100Before": 0,
       "Over100After": 0,
       "Kept": [
@@ -87,8 +119,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 1186,
-      "ChangedLines": 93,
+      "ChangedLines": 767,
       "Over100Before": 0,
       "Over100After": 0,
       "Kept": []
@@ -102,8 +136,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 257,
-      "ChangedLines": 18,
+      "ChangedLines": 93,
       "Over100Before": 0,
       "Over100After": 0,
       "Kept": []
@@ -117,14 +153,16 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 760,
-      "ChangedLines": 27,
+      "ChangedLines": 166,
       "Over100Before": 0,
       "Over100After": 0,
       "Kept": [
         {
           "Kept": "source",
-          "Line": 83,
+          "Line": 152,
           "Reason": "formatting would change the Lean syntax tree"
         }
       ]
@@ -138,22 +176,13 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 770,
-      "ChangedLines": 48,
+      "ChangedLines": 193,
       "Over100Before": 0,
       "Over100After": 0,
-      "Kept": [
-        {
-          "Kept": "source",
-          "Line": 748,
-          "Reason": "formatted text does not parse"
-        },
-        {
-          "Kept": "source",
-          "Line": 758,
-          "Reason": "formatted text does not parse"
-        }
-      ]
+      "Kept": []
     },
     {
       "Path": "Mathlib/Tactic/GCongr.lean",
@@ -164,8 +193,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 53,
-      "ChangedLines": 3,
+      "ChangedLines": 24,
       "Over100Before": 0,
       "Over100After": 0,
       "Kept": []
@@ -179,11 +210,19 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 1090,
-      "ChangedLines": 23,
+      "ChangedLines": 294,
       "Over100Before": 0,
       "Over100After": 0,
-      "Kept": []
+      "Kept": [
+        {
+          "Kept": "source",
+          "Line": 457,
+          "Reason": "formatted text does not parse"
+        }
+      ]
     },
     {
       "Path": "Mathlib/CategoryTheory/Category/Basic.lean",
@@ -194,8 +233,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 407,
-      "ChangedLines": 54,
+      "ChangedLines": 111,
       "Over100Before": 1,
       "Over100After": 1,
       "Kept": [
@@ -215,8 +256,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 22,
-      "ChangedLines": 0,
+      "ChangedLines": 6,
       "Over100Before": 0,
       "Over100After": 0,
       "Kept": []
@@ -230,8 +273,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 172,
-      "ChangedLines": 2,
+      "ChangedLines": 47,
       "Over100Before": 0,
       "Over100After": 0,
       "Kept": []
@@ -245,6 +290,8 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 5,
       "ChangedLines": 0,
       "Over100Before": 0,
@@ -260,8 +307,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 144,
-      "ChangedLines": 3,
+      "ChangedLines": 21,
       "Over100Before": 0,
       "Over100After": 0,
       "Kept": []
@@ -275,6 +324,8 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 5,
       "ChangedLines": 0,
       "Over100Before": 0,
@@ -290,8 +341,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 136,
-      "ChangedLines": 0,
+      "ChangedLines": 31,
       "Over100Before": 0,
       "Over100After": 0,
       "Kept": []
@@ -305,6 +358,8 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 5,
       "ChangedLines": 0,
       "Over100Before": 0,
@@ -320,8 +375,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 198,
-      "ChangedLines": 5,
+      "ChangedLines": 73,
       "Over100Before": 0,
       "Over100After": 0,
       "Kept": []
@@ -335,6 +392,8 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 5,
       "ChangedLines": 0,
       "Over100Before": 0,
@@ -350,8 +409,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 185,
-      "ChangedLines": 2,
+      "ChangedLines": 35,
       "Over100Before": 0,
       "Over100After": 0,
       "Kept": []
@@ -365,6 +426,8 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 5,
       "ChangedLines": 0,
       "Over100Before": 0,
@@ -380,8 +443,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 232,
-      "ChangedLines": 7,
+      "ChangedLines": 53,
       "Over100Before": 0,
       "Over100After": 0,
       "Kept": []
@@ -395,6 +460,8 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 11,
       "ChangedLines": 4,
       "Over100Before": 0,
@@ -410,8 +477,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 276,
-      "ChangedLines": 11,
+      "ChangedLines": 84,
       "Over100Before": 0,
       "Over100After": 0,
       "Kept": [
@@ -419,6 +488,11 @@
           "Kept": "source",
           "Line": 93,
           "Reason": "Unknown constant `term.pseudo.antiquot`"
+        },
+        {
+          "Kept": "line-breaks",
+          "Line": 129,
+          "Reason": "formatted text does not parse"
         }
       ]
     },
@@ -431,6 +505,8 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 5,
       "ChangedLines": 0,
       "Over100Before": 0,
@@ -446,8 +522,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 140,
-      "ChangedLines": 24,
+      "ChangedLines": 59,
       "Over100Before": 0,
       "Over100After": 0,
       "Kept": []
@@ -461,8 +539,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 22,
-      "ChangedLines": 0,
+      "ChangedLines": 3,
       "Over100Before": 0,
       "Over100After": 0,
       "Kept": []
@@ -476,8 +556,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 178,
-      "ChangedLines": 12,
+      "ChangedLines": 55,
       "Over100Before": 0,
       "Over100After": 0,
       "Kept": []
@@ -491,6 +573,8 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 5,
       "ChangedLines": 0,
       "Over100Before": 0,
@@ -506,8 +590,10 @@
       "FormatCode": 0,
       "CompileCode": 0,
       "Idempotent": true,
+      "LintBefore": [],
+      "LintAfter": [],
       "LinesBefore": 183,
-      "ChangedLines": 1,
+      "ChangedLines": 42,
       "Over100Before": 0,
       "Over100After": 0,
       "Kept": []

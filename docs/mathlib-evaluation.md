@@ -3,9 +3,13 @@
 The sample is pinned to Mathlib `56a005855ea17e0b0958f73ec801ae140b0a1679`
 and Lean 4.35.0: foundational modules plus the smallest and median-sized file
 in ten areas, 31 files and 9,998 lines. It is a compatibility sample, not a run
-across all 8,624 Lean files. Mathlib's sources already follow its style, so the
-number of lines Leanwisp changes measures how far its layout departs from
-handwritten Lean.
+across all 8,624 Lean files.
+
+Leanwisp's layout is canonical, so formatting Mathlib changes lines that Mathlib
+wrote in another style the guides allow. The acceptance criteria are therefore
+compilation, idempotence and Mathlib's own style linters
+(`-Dweak.linter.mathlibStandardSet=true`); the number of changed lines is reported
+for review, not minimized.
 
 ## Reproduce
 
@@ -27,13 +31,14 @@ lake env python /path/to/rust-leanwisp/tools/check-mathlib.py \
 An existing build cache can instead be supplied with `--lean-path`, a
 colon-separated list of its `lib/lean` directories.
 
-The script compiles each original, formats it into a separate tree with the
-default width of 100, compiles the result with the same module name, checks
-that a second pass changes nothing, counts changed lines and kept commands, and
-verifies the original SHA-256 hashes. It exits nonzero if any file fails or keeps
-a command unformatted.
+The script compiles each original with the style linters, formats it into a
+separate tree with the default width of 100, compiles the result with the same
+module name and linters, checks that a second pass changes nothing, counts
+changed lines and kept commands, and verifies the original SHA-256 hashes. It
+exits nonzero if any file fails, keeps a command unformatted or gains linter
+warnings.
 
-## Results (Leanwisp `0914ff8`)
+## Results (Leanwisp `fcb6459`)
 
 | Check | Result |
 |---|---:|
@@ -41,31 +46,30 @@ a command unformatted.
 | Formatted without a file error | 31/31 |
 | Recompilation of the formatted file | 31/31 |
 | Idempotence | 31/31 |
-| Changed lines | 447 of 9,998 (4.5%) |
-| Lines over 100 columns, before → after | 3 → 3 |
-| Commands kept as source | 6 in 5 files |
+| Mathlib style linter warnings, before → after | 0 → 0 |
+| Lines over 100 columns, before → after | 3 → 3 (long comments) |
+| Changed lines | 3,351 of 9,998 |
+| Commands not formatted canonically | 10 in 7 files |
 | Original checksums unchanged | 31/31 |
 
-Kept commands:
+The changed lines are the canonical choices among layouts the guides allow:
+headers and short bodies joined when they fit on one line, `t <;> u` and short
+tactic blocks joined, `where` fields and attributes placed by the documented
+rule, and two consecutive blank lines merged. See
+[the Order/Basic diff](mathlib-order.diff) and [the Nat/Basic diff](mathlib-nat.diff).
 
-- `Data/List/Basic.lean:927`, `ModularForms/SlashInvariantForms.lean:93`: Lean has
-  no formatter for `term.pseudo.antiquot`.
-- `CategoryTheory/Category/Basic.lean:204`: Lean has no formatter for `«|»`.
-- `Analysis/SpecificLimits/Basic.lean:83`: the layout would change the syntax tree.
-- `NumberTheory/Divisors.lean:748`, `:758`: the layout of a set literal with
-  source line breaks does not parse.
+Commands not formatted canonically:
 
-The changed lines are mostly these normalizations:
+- Lean has no formatter for the syntax, so the command keeps its source:
+  `Data/List/Basic.lean:927` and `ModularForms/SlashInvariantForms.lean:93`
+  (`term.pseudo.antiquot`), `CategoryTheory/Category/Basic.lean:204` (`«|»`).
+- The canonical layout would not parse or would change the syntax tree, so the
+  command keeps its source: `Algebra/Group/Basic.lean:1080`, `:1087`,
+  `Analysis/SpecificLimits/Basic.lean:152`, `Order/Basic.lean:457`.
+- The same, but keeping only the source line breaks (`line-breaks`):
+  `Basic/Logic/Basic.lean:37`, `:70`, `ModularForms/SlashInvariantForms.lean:129`.
 
-- two consecutive blank lines become one;
-- `¬ a` becomes `¬a`, and similar spacing around prefix operators;
-- tactics nested under `classical` or a match arm `=>` move to two columns
-  from their parent, as in the second hunk of [the Nat diff](mathlib-nat.diff);
-- lines over the width that the source wrapped differently are rewrapped.
-
-See [the Order/Basic diff](mathlib-order.diff) for a 1,090-line file. Per-file
-results, hashes and kept commands are in [mathlib-results.json](mathlib-results.json).
-
-Bulk application to all of Mathlib remains untested beyond this sample, and the
-check does not prove equivalence of source-position-sensitive macros. Review the
-diff before applying Leanwisp to a large codebase.
+Per-file results, hashes, linter warnings and kept commands are in
+[mathlib-results.json](mathlib-results.json). The check does not prove
+equivalence of source-position-sensitive macros, and Mathlib beyond this sample
+is untested.
