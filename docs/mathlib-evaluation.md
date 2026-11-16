@@ -38,7 +38,7 @@ changed lines and kept commands, and verifies the original SHA-256 hashes. It
 exits nonzero if any file fails, keeps a command unformatted or gains linter
 warnings.
 
-## Results (Leanwisp `fcb6459`)
+## Results (Leanwisp `428d9ab`)
 
 | Check | Result |
 |---|---:|
@@ -50,6 +50,7 @@ warnings.
 | Lines over 100 columns, before → after | 3 → 3 (long comments) |
 | Changed lines | 3,351 of 9,998 |
 | Commands not formatted canonically | 10 in 7 files |
+| Formatting time, all 31 files | 43.8 s (compiling the originals: 61.9 s) |
 | Original checksums unchanged | 31/31 |
 
 The changed lines are the canonical choices among layouts the guides allow:

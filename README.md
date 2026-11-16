@@ -155,7 +155,8 @@ source.
 Mathlib compatibility is tracked with a read-only, repeatable sample check in
 [docs/mathlib-evaluation.md](docs/mathlib-evaluation.md). It records compilation,
 idempotence, Mathlib's style linter warnings before and after formatting, changed
-lines, kept commands and source hashes.
+lines, kept commands and source hashes. The check also records formatting time; on the
+sample, formatting takes less time than compiling.
 `tools/check-mathlib.py --help` describes the check inputs.
 
 Apache-2.0. Leanwisp uses the Lean parser/formatter APIs pinned by `flake.lock`.
