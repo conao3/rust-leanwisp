@@ -87,7 +87,8 @@ when no input satisfies a theorem's hypotheses. It covers `entry`, `locate`,
 `#assay` line in the same change. `key` stays outside the audit: the theorems
 about it are those of `fields` and `importsFields`, and `fields_injective` leaves
 the byte count of the width field free (`#assay model.fields` reports the two
-holes).
+holes). The constants `usageStatus`, `failureStatus`, `minWidth` and `maxWidth` are
+outside it too: a theorem about one of them alone would repeat its value.
 
 Two Lean definitions specify code that runs in Rust. `measure` in `src/layout.rs`
 is the width measurement of a document (theorems: `measure_append_assoc`,
