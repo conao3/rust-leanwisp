@@ -1157,6 +1157,34 @@ mod tests {
                 fallback::comment_verdict(comments.concat(), changed.concat(), comments, changed),
                 Some(Blame::Commands(found)) if found == [70_000]
             ));
+            let stamps = |with: bool| -> Vec<(String, Option<cache::Stamp>)> {
+                (0..100_000u64)
+                    .map(|i| {
+                        let stamp = (with || i % 2 == 0).then(|| cache::Stamp {
+                            path: format!("/lib/M{i}.olean"),
+                            size: i,
+                            modified: std::time::Duration::new(i, 7),
+                        });
+                        (format!("M{i}"), stamp)
+                    })
+                    .collect()
+            };
+            assert_ne!(
+                cache::key("0.3.0", "adapter", 100, "def f := 1\n", stamps(true)),
+                cache::key("0.3.0", "adapter", 100, "def f := 1\n", stamps(false))
+            );
+            let outcomes = |changed: bool| -> Vec<policy::Outcome> {
+                (0..100_000)
+                    .map(|i| policy::Outcome {
+                        failed: false,
+                        changed: changed && i == 99_999,
+                    })
+                    .collect()
+            };
+            assert_eq!(policy::exit_code(true, false, outcomes(false)), 0);
+            assert_eq!(policy::exit_code(true, false, outcomes(true)), 254);
+            let applied: Vec<usize> = (0..100_000).collect();
+            assert_eq!(fallback::line_kept(&applied, &[5]).len(), 99_999);
             let commands: Vec<usize> = (0..3_000).collect();
             let once = fallback::escalate(&Keep::default(), &commands).unwrap();
             let twice = fallback::escalate(&once, &commands).unwrap();

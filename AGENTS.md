@@ -77,11 +77,14 @@ crossing into generated code per node or token (release build, `native/Format.le
 | `valid_ranges` | 985 µs in Lean for 6,729 ranges on every parse; 6.7 µs in Rust |
 | `comments`, `skip_trivia`, `token_positions`, `layout_blocks`, `restore_comments` | one string passed to a generated function and back costs 113 ns, 0.76 ms for one pass over the token gaps; `token_positions` takes 131 µs and `restore_comments` 183 µs in Rust |
 
-`imported_modules` and `error_offset` are scanners of Lean's header syntax and of
-the adapter's error messages. They decide nothing and their specification is
-Lean's own grammar, which the adapter applies when it parses the file. Everything
-the renderer and the text passes produce is validated on every run: the adapter
-parses the result again, and the verdicts of `src/fallback.rs` accept or reject it.
+`imported_modules` reads the imports of a file's header. The list selects the
+`.olean` stamps of the cache key and the groups of `schedule`. It stays in Rust
+(0.25 µs per file): its specification is Lean's header grammar, which the adapter
+applies when it parses the file, and a Lean definition of the scanner would carry
+no theorem about that grammar. `error_offset` converts the line and column of an
+adapter error message into a byte offset of the rendered text. Everything the
+renderer and the text passes produce is validated on every run: the adapter parses
+the result again, and the verdicts of `src/fallback.rs` accept or reject it.
 
 A rule called per group or per line break costs 6 to 19 ns per call (5,495 groups
 and 3,426 line breaks in the file above). `syntaxVerdict` takes 28 µs,
@@ -120,8 +123,8 @@ artifacts; it does not belong in the default `make check`.
 - `nix develop --command make check`: `nix fmt -- --ci`, Clippy,
   `lake -d lean build --wfail` (the theorems; a warning or a `sorry` fails), the
   comparison of `.leanfran/cache/` and `lean/` with what the build generated, and
-  `cargo test` (the comparisons with the Lean definitions, large inputs on a
-  worker's stack, and the formatter tests of `tests/format.rs`, which run the
+  `cargo test` (the comparisons with the Lean definitions, 100,000-element inputs
+  to the generated functions on a worker's stack, and the formatter tests of `tests/format.rs`, which run the
   adapter).
 - `nix build`: the package with the adapter; its check phase runs the same tests.
   `result/bin/leanwisp source format-source --file <file>` exercises the installed

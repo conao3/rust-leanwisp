@@ -100,8 +100,12 @@ fn find_upward(start: &Path, names: &[&str]) -> Option<PathBuf> {
 }
 
 fn line_width(opts: &Options, start: &Path) -> Result<usize, String> {
-    let configured = match (opts.line_width, find_upward(start, &["leanwisp.toml"])) {
-        (None, Some(dir)) => {
+    let located = match opts.line_width {
+        Some(_) => None,
+        None => find_upward(start, &["leanwisp.toml"]),
+    };
+    let configured = match located {
+        Some(dir) => {
             let path = dir.join("leanwisp.toml");
             let text =
                 std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -109,7 +113,7 @@ fn line_width(opts: &Options, start: &Path) -> Result<usize, String> {
                 toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
             config.line_width
         }
-        _ => None,
+        None => None,
     };
     Ok(policy::line_width(opts.line_width, configured))
 }

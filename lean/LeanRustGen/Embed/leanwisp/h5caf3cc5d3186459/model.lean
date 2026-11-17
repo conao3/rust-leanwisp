@@ -24,9 +24,7 @@ def importFields (entry : Import) : List Field :=
   | some stamp => [.module entry.module, .stamp stamp]
   | none => [.module entry.module]
 
-def importsFields : List Import → List Field
-  | [] => []
-  | entry :: rest => importFields entry ++ importsFields rest
+def importsFields (imports : List Import) : List Field := imports.flatMap importFields
 
 def fields (version adapter : String) (width : Nat) (source : String) (imports : List Import) :
     List Field :=
@@ -51,12 +49,19 @@ def absorb (hash : UInt64) : Field → UInt64
 def key (version adapter : String) (width : Nat) (source : String) (imports : List Import) : UInt64 :=
   (fields version adapter width source imports).foldl absorb offset
 
+theorem importsFields_nil : importsFields [] = [] := rfl
+
+theorem importsFields_cons (entry : Import) (rest : List Import) :
+    importsFields (entry :: rest) = importFields entry ++ importsFields rest := by
+  simp [importsFields]
+
 theorem importsFields_head (imports : List Import) (stamp : Stamp) (rest : List Field) :
     importsFields imports ≠ .stamp stamp :: rest := by
   cases imports with
-  | nil => simp [importsFields]
+  | nil => simp [importsFields_nil]
   | cons entry tail =>
-    unfold importsFields importFields
+    rw [importsFields_cons]
+    unfold importFields
     split <;> simp
 
 theorem importsFields_injective :
@@ -68,20 +73,23 @@ theorem importsFields_injective :
     cases second with
     | nil => rfl
     | cons entry tail =>
-      unfold importsFields importFields at h
+      rw [importsFields_nil, importsFields_cons] at h
+      unfold importFields at h
       split at h <;> simp at h
   | cons entry tail ih =>
     intro second h
     cases second with
     | nil =>
-      unfold importsFields importFields at h
+      rw [importsFields_nil, importsFields_cons] at h
+      unfold importFields at h
       split at h <;> simp at h
     | cons other others =>
       obtain ⟨module, stamp⟩ := entry
       obtain ⟨otherModule, otherStamp⟩ := other
+      rw [importsFields_cons, importsFields_cons] at h
       cases stamp <;> cases otherStamp <;>
-        simp only [importsFields, importFields, List.cons_append, List.nil_append,
-          List.cons.injEq, Field.module.injEq, Field.stamp.injEq] at h
+        simp only [importFields, List.cons_append, List.nil_append, List.cons.injEq,
+          Field.module.injEq, Field.stamp.injEq] at h
       · rw [h.1, ih others h.2]
       · exact absurd h.2 (importsFields_head tail _ _)
       · exact absurd h.2.symm (importsFields_head others _ _)

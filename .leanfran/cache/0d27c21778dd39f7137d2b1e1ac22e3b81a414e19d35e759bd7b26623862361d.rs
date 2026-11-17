@@ -250,27 +250,89 @@ pub(crate) unsafe fn l_model_fields(
 pub(crate) unsafe fn l_model_importsFields(mut x_1: Obj) -> Obj {
     let mut x_2: Obj = rt::lean_box(0);
     let mut x_3: Obj = rt::lean_box(0);
+    x_2 = l_model_importsFields___closed__0();
+    x_3 = l___private_Init_Data_List_Impl_0__List_flatMapTR_go___at___00model_importsFields_spec__0(
+        x_1, x_2,
+    );
+    return x_3;
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    clippy::all
+)]
+unsafe fn l_model_importsFields___closed__0_init() -> Obj {
+    let mut x_1: Obj = rt::lean_box(0);
+    let mut x_2: Obj = rt::lean_box(0);
+    x_1 = rt::lean_unsigned_to_nat(0u32);
+    x_2 = rt::lean_mk_empty_array_with_capacity(x_1);
+    return x_2;
+}
+#[allow(dead_code, non_snake_case, clippy::all)]
+pub(crate) unsafe fn l_model_importsFields___closed__0() -> Obj {
+    thread_local! { static CELL: core::cell::OnceCell<Obj> = const { core::cell::OnceCell::new() }; }
+    if let Some(v) = CELL.with(|c| c.get().copied()) {
+        return v;
+    }
+    let v = l_model_importsFields___closed__0_init();
+    rt::lean_mark_persistent(v);
+    CELL.with(|c| *c.get_or_init(|| v))
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    unused_unsafe,
+    clippy::all
+)]
+pub(crate) unsafe fn l___private_Init_Data_List_Impl_0__List_flatMapTR_go___at___00model_importsFields_spec__0(
+    mut x_1: Obj,
+    mut x_2: Obj,
+) -> Obj {
+    let mut x_3: Obj = rt::lean_box(0);
     let mut x_4: Obj = rt::lean_box(0);
     let mut x_5: Obj = rt::lean_box(0);
     let mut x_6: Obj = rt::lean_box(0);
     let mut x_7: Obj = rt::lean_box(0);
-    match rt::lean_obj_tag(x_1) {
-        0 => {
-            x_2 = rt::lean_box(0);
-            return x_2;
+    let mut x_8: Obj = rt::lean_box(0);
+    let mut __blk: u32 = 0;
+    'body: loop {
+        match __blk {
+            0 => match rt::lean_obj_tag(x_1) {
+                0 => {
+                    x_3 = rt::lean_array_to_list(x_2);
+                    return x_3;
+                }
+                1 => {
+                    x_4 = rt::lean_ctor_get(x_1, 0);
+                    rt::lean_inc(x_4);
+                    x_5 = rt::lean_ctor_get(x_1, 1);
+                    rt::lean_inc(x_5);
+                    rt::lean_dec_ref(x_1);
+                    x_6 = l_model_importFields(x_4);
+                    x_7 = l_List_foldl___at___00Array_appendList_spec__0___redArg(x_2, x_6);
+                    {
+                        let t_0 = x_5;
+                        let t_1 = x_7;
+                        x_1 = t_0;
+                        x_2 = t_1;
+                    }
+                    __blk = 0;
+                    continue 'body;
+                }
+                _ => rt::lean_internal_panic_unreachable(),
+            },
+            _ => rt::lean_internal_panic_unreachable(),
         }
-        1 => {
-            x_3 = rt::lean_ctor_get(x_1, 0);
-            rt::lean_inc(x_3);
-            x_4 = rt::lean_ctor_get(x_1, 1);
-            rt::lean_inc(x_4);
-            rt::lean_dec_ref(x_1);
-            x_5 = l_model_importFields(x_3);
-            x_6 = l_model_importsFields(x_4);
-            x_7 = l_List_appendTR___redArg(x_5, x_6);
-            return x_7;
-        }
-        _ => rt::lean_internal_panic_unreachable(),
     }
 }
 
@@ -521,124 +583,39 @@ pub(crate) unsafe fn l_model_importFields(mut x_1: Obj) -> Obj {
     unused_unsafe,
     clippy::all
 )]
-pub(crate) unsafe fn l_List_appendTR___redArg(mut x_1: Obj, mut x_2: Obj) -> Obj {
+pub(crate) unsafe fn l_List_foldl___at___00Array_appendList_spec__0___redArg(
+    mut x_1: Obj,
+    mut x_2: Obj,
+) -> Obj {
     let mut x_3: Obj = rt::lean_box(0);
     let mut x_4: Obj = rt::lean_box(0);
-    x_3 = l_List_reverse___redArg(x_1);
-    x_4 = l_List_reverseAux___redArg(x_3, x_2);
-    return x_4;
-}
-
-#[allow(
-    dead_code,
-    non_snake_case,
-    unused_mut,
-    unused_assignments,
-    unused_variables,
-    unreachable_code,
-    unused_unsafe,
-    clippy::all
-)]
-pub(crate) unsafe fn l_List_reverse___redArg(mut x_1: Obj) -> Obj {
-    let mut x_2: Obj = rt::lean_box(0);
-    let mut x_3: Obj = rt::lean_box(0);
-    x_2 = rt::lean_box(0);
-    x_3 = l_List_reverseAux___redArg(x_1, x_2);
-    return x_3;
-}
-
-#[allow(
-    dead_code,
-    non_snake_case,
-    unused_mut,
-    unused_assignments,
-    unused_variables,
-    unreachable_code,
-    unused_unsafe,
-    clippy::all
-)]
-pub(crate) unsafe fn l_List_reverseAux___redArg(mut x_1: Obj, mut x_2: Obj) -> Obj {
-    let mut x_3: Obj = rt::lean_box(0);
-    let mut x_4: Obj = rt::lean_box(0);
+    let mut x_5: Obj = rt::lean_box(0);
     let mut x_6: Obj = rt::lean_box(0);
-    let mut x_7: u8 = 0;
-    let mut x_9: Obj = rt::lean_box(0);
-    let mut x_10: Obj = rt::lean_box(0);
-    let mut x_11: Obj = rt::lean_box(0);
-    let mut x_12: u8 = 0;
     let mut __blk: u32 = 0;
     'body: loop {
         match __blk {
-            0 => match rt::lean_obj_tag(x_1) {
+            0 => match rt::lean_obj_tag(x_2) {
                 0 => {
-                    return x_2;
+                    return x_1;
                 }
                 1 => {
-                    x_3 = rt::lean_ctor_get(x_1, 0);
-                    x_4 = rt::lean_ctor_get(x_1, 1);
-                    x_12 = (!rt::lean_is_exclusive(x_1)) as u8;
-                    match x_12 as u32 {
-                        0 => {
-                            {
-                                let t_0 = x_1;
-                                let t_1 = x_12;
-                                x_6 = t_0;
-                                x_7 = t_1;
-                            }
-                            __blk = 1;
-                            continue 'body;
-                        }
-                        1 => {
-                            rt::lean_inc(x_4);
-                            rt::lean_inc(x_3);
-                            rt::lean_dec(x_1);
-                            {
-                                let t_0 = rt::lean_box(0);
-                                let t_1 = x_12;
-                                x_6 = t_0;
-                                x_7 = t_1;
-                            }
-                            __blk = 1;
-                            continue 'body;
-                        }
-                        _ => rt::lean_internal_panic_unreachable(),
-                    }
-                }
-                _ => rt::lean_internal_panic_unreachable(),
-            },
-            1 => match x_7 as u32 {
-                0 => {
-                    rt::lean_ctor_set(x_6, 1, x_2);
+                    x_3 = rt::lean_ctor_get(x_2, 0);
+                    rt::lean_inc(x_3);
+                    x_4 = rt::lean_ctor_get(x_2, 1);
+                    rt::lean_inc(x_4);
+                    rt::lean_dec_ref(x_2);
+                    x_5 = rt::lean_array_push(x_1, x_3);
                     {
-                        let t_0 = x_6;
-                        x_9 = t_0;
+                        let t_0 = x_5;
+                        let t_1 = x_4;
+                        x_1 = t_0;
+                        x_2 = t_1;
                     }
-                    __blk = 2;
-                    continue 'body;
-                }
-                1 => {
-                    x_11 = rt::lean_alloc_ctor(1, 2, 0 * core::mem::size_of::<usize>() as u32 + 0);
-                    rt::lean_ctor_set(x_11, 0, x_3);
-                    rt::lean_ctor_set(x_11, 1, x_2);
-                    {
-                        let t_0 = x_11;
-                        x_9 = t_0;
-                    }
-                    __blk = 2;
+                    __blk = 0;
                     continue 'body;
                 }
                 _ => rt::lean_internal_panic_unreachable(),
             },
-            2 => {
-                {
-                    let t_0 = x_4;
-                    let t_1 = x_9;
-                    x_1 = t_0;
-                    x_2 = t_1;
-                }
-                __blk = 0;
-                continue 'body;
-            }
             _ => rt::lean_internal_panic_unreachable(),
         }
     }
@@ -1211,9 +1188,9 @@ pub fn offset() -> u64 {
 
 #[doc = "Lean: `model.importsFields : List model.Import → List model.Field` (module `LeanRustGen.Embed.leanwisp.h5caf3cc5d3186459.model`)."]
 #[::leanfran::exported("model.importsFields")]
-pub fn imports_fields(arg0: Vec<Import>) -> Vec<Field> {
+pub fn imports_fields(imports: Vec<Import>) -> Vec<Field> {
     unsafe {
-        let __a0: Obj = rt::list_to_lean(arg0, |v0| rt::ToLean::to_lean(v0));
+        let __a0: Obj = rt::list_to_lean(imports, |v0| rt::ToLean::to_lean(v0));
         let __r: Obj = l_model_importsFields(__a0);
         let __v = rt::list_from_lean(__r, |v0| <Field as rt::FromLean>::from_lean(v0));
         rt::lean_dec(__r);
