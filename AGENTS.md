@@ -26,20 +26,33 @@ group or line break.
   `commandAt`); `lineKept` selects the commands reported as `line-breaks`.
   Theorems: a command climbs one level per escalation and no other command moves
   (`escalateOne_level`, `escalateOne_other`), a file with `count` commands is
-  escalated at most `2 * count` times (`escalate_total`, `total_le`), every blamed
-  index names a command of the original (`blame_bound`, `commandAt_lt`,
-  `commandAt_last`), a failure falls on the whole file only when the command trees
-  are equal or one side has no command (`blame_file`), and a verdict passes exactly
+  escalated at most `2 * count` times (`escalate_total`, `total_le`), a failure
+  blamed on distinct commands that are not yet kept verbatim always gives a next
+  attempt (`escalate_isSome`), `lineKept` holds exactly the applied commands that are
+  not verbatim (`mem_lineKept_iff`), every blamed index names a command of the
+  original (`blame_bound`, `commandAt_lt`, `commandAt_last`, `stabilityVerdict_within`,
+  `parseBlame_within`, stated with the predicate `Blame.within`), a failure falls on the whole file only when the command trees
+  are equal or one side has no command (`blame_file`), a verdict passes exactly
   when trees and token counts, or comments, are equal (`syntaxVerdict_none_iff`,
-  `commentVerdict_none_iff`).
+  `commentVerdict_none_iff`), a comment failure is blamed on the first command whose
+  comments differ, or on the file when the per-command comments agree
+  (`commentVerdict_blame`), a stability failure is reported exactly when the two
+  renderings differ (`stabilityVerdict_isSome`), and a parse failure falls on the
+  file exactly when the command starts or the error offset are missing
+  (`parseBlame_file_iff`).
 - `src/layout.rs`: the width and indentation rules of the renderer. `fits` and
   `needsContext` decide whether a group stays on one line; `softblockIndent`,
   `blockIndent` and `breakIndent` give the indentation after `by`/`do` blocks and
   forced breaks; `alignAction` places an aligned continuation. Theorems: a block
   is indented at most two columns from the start of its statement and never past
-  the nesting indentation (`softblockIndent_le`, `blockIndent_le`), a group is flat
-  exactly when it has no forced break and fits the room (`fits_iff`), and padding
-  reaches the alignment column (`alignAction_pad`).
+  the nesting indentation, and its indentation is one of those bounds
+  (`softblockIndent_le`, `softblockIndent_attained`, `blockIndent_le`,
+  `blockIndent_attained`), a group is flat exactly when it has no forced break and
+  fits the room (`fits_iff`), the width after a group is measured exactly when the
+  group has no line break and fits the room (`needsContext_iff`), and an aligned
+  continuation is indented at the start of a line, padded up to the alignment
+  column before it, and wrapped at or past it (`alignAction_indent_iff`,
+  `alignAction_pad`, `alignAction_wrap_iff`).
 - `src/schedule.rs`: `schedule` splits the groups of files with equal imports
   across `--paths` workers. Theorems: every file is assigned exactly once
   (`schedule_perm`), a scheduled group never mixes files of different imports
@@ -49,12 +62,32 @@ group or line break.
   workers, which directory entries `--paths` formats (`entry`), how `--source` is
   read (`locate`), when `--write` is allowed and applied, the status of a file and
   the exit status. Theorems: `default_width_is_valid`, `jobs_bounds`,
-  `workers_bounds`, `hidden_and_symlinks_are_skipped`, `formatted_entry`,
-  `check_never_writes`, `exitCode_cases`, `check_passes_iff`, `format_passes_iff`,
-  `status_error_iff`, `status_formatted_iff`.
+  `jobs_requested`, `jobs_default`, `workers_bounds`,
+  `hidden_and_symlinks_are_skipped`, `entry_format_iff`, `entry_descend_iff`,
+  `locate_stdin`, `locate_literal`, `check_never_writes`, `writable_iff`,
+  `exitCode_cases`, `check_passes_iff`, `format_passes_iff`, `status_error_iff`,
+  `status_formatted_iff`, `status_changed_iff`.
 - `src/cache.rs`: the fields of a cache key and their FNV-1a hash (`fields`,
   `key`). Theorem: the fields determine the build, the adapter, the width, the
   source and every import with its `.olean` stamp (`fields_injective`).
+
+A theorem counts when it rules out a broken implementation. `audit/` is a Lake
+package that runs [lean-assay](https://github.com/conao3/lean-assay) on the
+generated functions Rust calls: `#assay` breaks each function in small ways and
+runs the theorems about it on the broken versions. `lake -d audit build --wfail`
+fails when a function has no theorem, when no broken version of it is refuted,
+when a broken version satisfies every theorem but changes the output (a hole), or
+when no input satisfies a theorem's hypotheses. It covers `entry`, `locate`,
+`validWidth`, `lineWidth`, `jobs`, `workers`, `writable`, `writes`, `status`,
+`exitCode`, `escalate`, `lineKept`, `syntaxVerdict`, `commentVerdict`,
+`stabilityVerdict`, `parseBlame`, `importsFields`, `softblockIndent`,
+`blockIndent`, `breakIndent`, `fits`, `needsContext`, `alignAction` and `schedule`:
+155 broken versions, 140 refuted, 11 with the same output on every input tried,
+4 that do not typecheck. A function added to a block gets a theorem and an
+`#assay` line in the same change. `key` stays outside the audit: the theorems
+about it are those of `fields` and `importsFields`, and `fields_injective` leaves
+the byte count of the width field free (`#assay model.fields` reports the two
+holes).
 
 Two Lean definitions specify code that runs in Rust. `measure` in `src/layout.rs`
 is the width measurement of a document (theorems: `measure_append_assoc`,
@@ -121,8 +154,10 @@ artifacts; it does not belong in the default `make check`.
   `lean/` and `.leanfran/cache/` together with the block. `nix build` sets
   `LEANFRAN_OFFLINE=1` and uses the committed cache only.
 - `nix develop --command make check`: `nix fmt -- --ci`, Clippy,
-  `lake -d lean build --wfail` (the theorems; a warning or a `sorry` fails), the
-  comparison of `.leanfran/cache/` and `lean/` with what the build generated, and
+  `lake -d lean build --wfail` (the theorems; a warning or a `sorry` fails),
+  `lake -d audit build --wfail` (the audit of the theorems with lean-assay; Lake
+  fetches lean-assay and plausible at the revisions of `audit/lake-manifest.json`),
+  the comparison of `.leanfran/cache/` and `lean/` with what the build generated, and
   `cargo test` (the comparisons with the Lean definitions, 100,000-element inputs
   to the generated functions on a worker's stack, and the formatter tests of `tests/format.rs`, which run the
   adapter).

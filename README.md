@@ -204,7 +204,7 @@ supported; Linux is tested, and the Nix flake also declares aarch64-darwin.
 ## Development
 
 ```sh
-nix develop --command make check  # rustfmt/nixfmt/ruff, clippy, Lean theorems, generated code, all tests
+nix develop --command make check  # rustfmt/nixfmt/ruff, clippy, Lean theorems and their audit, generated code, all tests
 nix build                       # packaged application and integration tests
 nix run . -- --version
 ```
@@ -212,7 +212,10 @@ nix run . -- --version
 Enable the optional pre-commit hook with `git config core.hooksPath .githooks`.
 `lean/` and `.leanfran/cache/` are generated from the `lean!` blocks under `src/`;
 the dev shell regenerates them on `cargo build`, and `make check` fails when the
-committed files differ.
+committed files differ. `audit/` runs
+[lean-assay](https://github.com/conao3/lean-assay) on the generated functions:
+`make check` fails when a broken version of one of them satisfies every theorem
+about it.
 Tests include golden layouts for each rule above, narrow and wide widths,
 literal and comment preservation, per-command fallbacks and opt-out markers,
 150 declarations, Lake-local notation, CLI write/check/`--paths` behavior,

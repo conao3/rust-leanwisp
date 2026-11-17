@@ -73,6 +73,13 @@ theorem jobs_bounds (requested : Option Nat) (available : Nat) :
   unfold jobs
   omega
 
+theorem jobs_requested (requested available : Nat) (h : 1 ≤ requested ∧ requested ≤ 64) :
+    jobs (some requested) available = requested := by
+  simp only [jobs, Option.getD_some]
+  omega
+
+theorem jobs_default (available : Nat) : jobs none available = jobs (some available) available := rfl
+
 theorem workers_bounds (jobs groups : Nat) (h : 1 ≤ jobs) :
     1 ≤ workers jobs groups ∧ workers jobs groups ≤ jobs ∧ workers jobs groups ≤ max groups 1 := by
   unfold workers
@@ -81,6 +88,10 @@ theorem workers_bounds (jobs groups : Nat) (h : 1 ≤ jobs) :
 theorem check_never_writes (write literal : Bool) (h : writable write true literal = true) :
     write = false := by
   cases write <;> simp_all [writable]
+
+theorem writable_iff (write check literal : Bool) :
+    writable write check literal = true ↔ write = false ∨ (check = false ∧ literal = false) := by
+  cases write <;> cases check <;> cases literal <;> simp [writable]
 
 theorem exitCode_cases (check write : Bool) (outcomes : List Outcome) :
     exitCode check write outcomes = 0 ∨ exitCode check write outcomes = failureStatus := by
@@ -142,23 +153,38 @@ theorem status_formatted_iff (outcome : Outcome) (write : Bool) :
   unfold status writes
   cases outcome.failed <;> cases write <;> cases outcome.changed <;> simp
 
+theorem status_changed_iff (outcome : Outcome) (write : Bool) :
+    status outcome write = .changed ↔
+      outcome.failed = false ∧ write = false ∧ outcome.changed = true := by
+  unfold status writes
+  cases outcome.failed <;> cases write <;> cases outcome.changed <;> simp
+
 theorem hidden_and_symlinks_are_skipped (name : String) (symlink directory : Bool)
     (h : name.startsWith "." = true ∨ symlink = true) : entry name symlink directory = .skip := by
   unfold entry
   rcases h with h | h <;> simp [h]
 
-theorem formatted_entry (name : String) (symlink directory : Bool)
-    (h : entry name symlink directory = .format) :
-    name.endsWith ".lean" = true ∧ name.startsWith "." = false ∧ symlink = false ∧
-      directory = false := by
-  unfold entry at h
-  split at h
-  · cases h
-  · split at h
-    · cases h
-    · split at h
-      · simp_all
-      · cases h
+theorem entry_format_iff (name : String) (symlink directory : Bool) :
+    entry name symlink directory = .format ↔
+      name.endsWith ".lean" = true ∧ name.startsWith "." = false ∧ symlink = false ∧
+        directory = false := by
+  unfold entry
+  cases name.startsWith "." <;> cases symlink <;> cases directory <;>
+    cases name.endsWith ".lean" <;> simp
+
+theorem entry_descend_iff (name : String) (symlink directory : Bool) :
+    entry name symlink directory = .descend ↔
+      name.startsWith "." = false ∧ symlink = false ∧ directory = true := by
+  unfold entry
+  cases name.startsWith "." <;> cases symlink <;> cases directory <;>
+    cases name.endsWith ".lean" <;> simp
+
+theorem locate_stdin : locate "file:///dev/stdin" = .stdin := by
+  simp [locate]
+
+theorem locate_literal (value : String) (hstdin : value ≠ "file:///dev/stdin")
+    (hfile : value.startsWith "file://" = false) : locate value = .literal value := by
+  simp [locate, hstdin, hfile]
 
 theorem literal_source (value text : String) (h : locate value = .literal text) : text = value := by
   unfold locate at h

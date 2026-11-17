@@ -2,3 +2,4 @@
 /target
 /native/.lake
 /lean/.lake
+/audit/.lake

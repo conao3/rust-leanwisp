@@ -92,6 +92,10 @@ leanfran::lean! {
       | some starts, some offset => .commands [commandAt starts offset]
       | _, _ => .file
 
+    def Blame.within (count : Nat) : Blame → Bool
+      | .file => true
+      | .commands indices => indices.all (· < count)
+
     def rangesFrom (length previous : Nat) : List (Nat × Nat) → Bool
       | [] => true
       | range :: rest =>
@@ -189,6 +193,10 @@ leanfran::lean! {
         (h : index ∈ lineKept applied verbatim) : mode ⟨applied, verbatim⟩ index = .lineBreaks := by
       simp [lineKept] at h
       simp [mode, h]
+
+    theorem mem_lineKept_iff (applied verbatim : List Nat) (index : Nat) :
+        index ∈ lineKept applied verbatim ↔ index ∈ applied ∧ index ∉ verbatim := by
+      simp [lineKept]
 
     theorem differingFrom_append (a b : List String) :
         ∀ index found, differingFrom index found a b = found.reverse ++ differingFrom index [] a b := by
@@ -367,6 +375,123 @@ leanfran::lean! {
       have := commandAtFrom_last offset starts 0 0 i h hle
       unfold commandAt
       omega
+
+    theorem escalate_isSome (keep : Keep) (indices : List Nat)
+        (hfresh : ∀ index ∈ indices, index ∉ keep.verbatim) (hnodup : indices.Nodup) :
+        (escalate keep indices).isSome = true := by
+      induction indices generalizing keep with
+      | nil => simp [escalate]
+      | cons index rest ih =>
+        have hindex : index ∉ keep.verbatim := hfresh index (by simp)
+        have hrest : index ∉ rest := (List.nodup_cons.mp hnodup).1
+        unfold escalate
+        cases hone : escalateOne keep index with
+        | none =>
+          have hmode := (escalateOne_none_iff keep index).mp hone
+          unfold mode at hmode
+          split at hmode
+          · simp_all
+          · split at hmode <;> cases hmode
+        | some next =>
+          simp only
+          apply ih next
+          · intro other hother
+            have hold : other ∉ keep.verbatim := hfresh other (by simp [hother])
+            have hne : other ≠ index := fun heq => hrest (heq ▸ hother)
+            unfold escalateOne at hone
+            split at hone
+            · cases hone; exact hold
+            · cases hone; simp [hold, hne]
+            · cases hone
+          · exact (List.nodup_cons.mp hnodup).2
+
+    theorem firstDifferenceFrom_some (a b : List (List String)) :
+        ∀ start index, firstDifferenceFrom start a b = some index →
+          start ≤ index ∧ a[index - start]? ≠ b[index - start]? ∧
+            index - start < a.length ∧ index - start < b.length ∧
+            ∀ j, j < index - start → a[j]? = b[j]? := by
+      induction a generalizing b with
+      | nil => intro start index h; simp [firstDifferenceFrom] at h
+      | cons x xs ih =>
+        intro start index h
+        cases b with
+        | nil => simp [firstDifferenceFrom] at h
+        | cons y ys =>
+          unfold firstDifferenceFrom at h
+          split at h
+          next heq =>
+            obtain ⟨hle, hne, hla, hlb, hall⟩ := ih ys (start + 1) index h
+            have hsub : index - start = (index - (start + 1)) + 1 := by omega
+            refine ⟨by omega, ?_, ?_, ?_, ?_⟩
+            · rw [hsub]; simpa using hne
+            · rw [hsub]; simpa using hla
+            · rw [hsub]; simpa using hlb
+            · intro j hj
+              cases j with
+              | zero => simp [heq]
+              | succ j => simpa using hall j (by omega)
+          next hne =>
+            cases h
+            simp [hne]
+
+    theorem firstDifferenceFrom_none (a b : List (List String)) :
+        ∀ start, firstDifferenceFrom start a b = none →
+          ∀ j, j < a.length → j < b.length → a[j]? = b[j]? := by
+      induction a generalizing b with
+      | nil => intro start _ j hj; simp at hj
+      | cons x xs ih =>
+        intro start h j hja hjb
+        cases b with
+        | nil => simp at hjb
+        | cons y ys =>
+          unfold firstDifferenceFrom at h
+          split at h
+          next heq =>
+            cases j with
+            | zero => simp [heq]
+            | succ j => simpa using ih ys (start + 1) h j (by simpa using hja) (by simpa using hjb)
+          next => cases h
+
+    theorem commentVerdict_blame (original formatted : List String)
+        (byCommand formattedByCommand : List (List String)) (h : original ≠ formatted) :
+        (commentVerdict original formatted byCommand formattedByCommand = some .file ∧
+            ∀ j, j < byCommand.length → j < formattedByCommand.length →
+              byCommand[j]? = formattedByCommand[j]?) ∨
+          ∃ index, index < byCommand.length ∧
+            (commentVerdict original formatted byCommand formattedByCommand =
+                some (.commands [index]) ∧
+              byCommand[index]? ≠ formattedByCommand[index]? ∧
+              ∀ j, j < index → byCommand[j]? = formattedByCommand[j]?) := by
+      unfold commentVerdict
+      simp only [h, ↓reduceIte]
+      cases hfound : firstDifferenceFrom 0 byCommand formattedByCommand with
+      | none =>
+        exact Or.inl ⟨rfl, firstDifferenceFrom_none byCommand formattedByCommand 0 hfound⟩
+      | some index =>
+        have hspec := firstDifferenceFrom_some byCommand formattedByCommand 0 index hfound
+        simp only [Nat.sub_zero] at hspec
+        exact Or.inr ⟨index, hspec.2.2.1, rfl, hspec.2.1, hspec.2.2.2.2⟩
+
+    theorem stabilityVerdict_isSome (starts : List Nat) (difference : Option Nat) :
+        (stabilityVerdict starts difference).isSome = difference.isSome := by
+      cases difference <;> rfl
+
+    theorem stabilityVerdict_within (starts : List Nat) (difference : Option Nat)
+        (h : starts ≠ []) :
+        (stabilityVerdict starts difference).all (Blame.within starts.length) = true := by
+      cases difference with
+      | none => rfl
+      | some offset => simp [stabilityVerdict, Blame.within, commandAt_lt starts offset h]
+
+    theorem parseBlame_file_iff (starts : Option (List Nat)) (offset : Option Nat) :
+        parseBlame starts offset = .file ↔ starts = none ∨ offset = none := by
+      cases starts <;> cases offset <;> simp [parseBlame]
+
+    theorem parseBlame_within (starts : List Nat) (offset : Option Nat) (h : starts ≠ []) :
+        (parseBlame (some starts) offset).within starts.length = true := by
+      cases offset with
+      | none => rfl
+      | some offset => simp [parseBlame, Blame.within, commandAt_lt starts offset h]
 
     theorem rangesFrom_bounds (length : Nat) (ranges : List (Nat × Nat)) :
         ∀ previous, rangesFrom length previous ranges = true →

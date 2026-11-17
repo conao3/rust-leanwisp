@@ -574,6 +574,89 @@ pub(crate) unsafe fn l_model_rangesFrom(mut x_1: Obj, mut x_2: Obj, mut x_3: Obj
     unused_unsafe,
     clippy::all
 )]
+pub(crate) unsafe fn l_model_Blame_within(mut x_1: Obj, mut x_2: Obj) -> u8 {
+    let mut x_3: Obj = rt::lean_box(0);
+    let mut x_4: u8 = 0;
+    let mut x_5: u8 = 0;
+    match rt::lean_obj_tag(x_2) {
+        0 => {
+            x_3 = rt::lean_ctor_get(x_2, 0);
+            x_4 = l_List_all___at___00model_Blame_within_spec__0(x_1, x_3);
+            return x_4;
+        }
+        1 => {
+            x_5 = 1u8;
+            return x_5;
+        }
+        _ => rt::lean_internal_panic_unreachable(),
+    }
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    unused_unsafe,
+    clippy::all
+)]
+pub(crate) unsafe fn l_List_all___at___00model_Blame_within_spec__0(
+    mut x_1: Obj,
+    mut x_2: Obj,
+) -> u8 {
+    let mut x_3: u8 = 0;
+    let mut x_4: Obj = rt::lean_box(0);
+    let mut x_5: Obj = rt::lean_box(0);
+    let mut x_6: u8 = 0;
+    let mut x_7: u8 = 0;
+    let mut __blk: u32 = 0;
+    'body: loop {
+        match __blk {
+            0 => match rt::lean_obj_tag(x_2) {
+                0 => {
+                    x_3 = 1u8;
+                    return x_3;
+                }
+                1 => {
+                    x_4 = rt::lean_ctor_get(x_2, 0);
+                    x_5 = rt::lean_ctor_get(x_2, 1);
+                    x_6 = rt::lean_nat_dec_lt(x_4, x_1);
+                    match x_6 as u32 {
+                        0 => {
+                            return x_6;
+                        }
+                        1 => {
+                            {
+                                let t_0 = x_1;
+                                let t_1 = x_5;
+                                x_1 = t_0;
+                                x_2 = t_1;
+                            }
+                            __blk = 0;
+                            continue 'body;
+                        }
+                        _ => rt::lean_internal_panic_unreachable(),
+                    }
+                }
+                _ => rt::lean_internal_panic_unreachable(),
+            },
+            _ => rt::lean_internal_panic_unreachable(),
+        }
+    }
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    unused_unsafe,
+    clippy::all
+)]
 pub(crate) unsafe fn l_model_level(mut x_1: Obj, mut x_2: Obj) -> Obj {
     let mut x_3: u8 = 0;
     let mut x_4: Obj = rt::lean_box(0);
@@ -2398,6 +2481,19 @@ pub fn ranges_from(length: rt::Nat, previous: rt::Nat, arg2: Vec<(rt::Nat, rt::N
         rt::lean_dec(__a0);
         rt::lean_dec(__a1);
         rt::lean_dec(__a2);
+        (__r) != 0
+    }
+}
+
+#[doc = "Lean: `model.Blame.within : Nat → model.Blame → Bool` (module `LeanRustGen.Embed.leanwisp.h4431e1275bb49e96.model`)."]
+#[::leanfran::exported("model.Blame.within")]
+pub fn blame_within(count: rt::Nat, arg1: Blame) -> bool {
+    unsafe {
+        let __a0: Obj = rt::ToLean::to_lean(count);
+        let __a1: Obj = rt::ToLean::to_lean(arg1);
+        let __r: u8 = l_model_Blame_within(__a0, __a1);
+        rt::lean_dec(__a0);
+        rt::lean_dec(__a1);
         (__r) != 0
     }
 }

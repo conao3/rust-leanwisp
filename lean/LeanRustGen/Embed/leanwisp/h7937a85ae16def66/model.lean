@@ -83,12 +83,41 @@ theorem blockIndent_le (indent : Int) (base : Nat) (delta : Int) :
   unfold blockIndent
   omega
 
+theorem softblockIndent_attained (indent : Int) (base : Nat) :
+    softblockIndent indent base = base + 2 ∨ softblockIndent indent base = indent.toNat := by
+  unfold softblockIndent
+  omega
+
+theorem blockIndent_attained (indent : Int) (base : Nat) (delta : Int) :
+    blockIndent indent base delta = base + 2 ∨ blockIndent indent base delta = indent.toNat ∨
+      blockIndent indent base delta = (base + delta).toNat := by
+  unfold blockIndent
+  omega
+
 theorem breakIndent_zero (base : Nat) : breakIndent base 0 = base := by
   simp [breakIndent]
 
 theorem fits_iff (hard : Bool) (total room : USize) :
     fits hard total room = true ↔ hard = false ∧ total ≤ room := by
   simp [fits]
+
+theorem needsContext_iff (line : Bool) (size room : USize) :
+    needsContext line size room = true ↔ line = false ∧ size ≤ room := by
+  simp [needsContext, USize.not_lt]
+
+theorem alignAction_indent_iff (column : Nat) (indent : Int) :
+    alignAction column indent = .indent ↔ column = 0 := by
+  unfold alignAction
+  split
+  · simp_all
+  · split <;> simp_all
+
+theorem alignAction_wrap_iff (column : Nat) (indent : Int) :
+    alignAction column indent = .wrap ↔ column ≠ 0 ∧ indent.toNat ≤ column := by
+  unfold alignAction
+  split
+  · simp_all
+  · split <;> simp_all
 
 theorem alignAction_pad (column : Nat) (indent : Int) (spaces : Nat)
     (h : alignAction column indent = .pad spaces) : 0 < spaces ∧ column + spaces = indent.toNat := by
