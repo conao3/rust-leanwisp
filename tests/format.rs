@@ -537,65 +537,6 @@ fn cli_reuses_cached_results() {
 }
 
 #[test]
-fn daemon_serves_the_same_results() {
-    use std::process::{Command, Stdio};
-    let dir = std::env::temp_dir().join(format!("leanwisp-daemon-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let file = dir.join("Served.lean");
-    let source = "def served:Nat:=1\ntheorem t:served=1:=rfl\n";
-    std::fs::write(&file, source).unwrap();
-    let binary = env!("CARGO_BIN_EXE_leanwisp");
-    let mut daemon = Command::new(binary)
-        .env("XDG_RUNTIME_DIR", &dir)
-        .args(["daemon", "start-daemon"])
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    {
-        use std::io::BufRead;
-        let mut line = String::new();
-        std::io::BufReader::new(daemon.stdout.as_mut().unwrap())
-            .read_line(&mut line)
-            .unwrap();
-        assert!(line.contains("leanwisp.sock"), "{line}");
-    }
-    let run = |args: &[&str]| {
-        let output = Command::new(binary)
-            .env("XDG_RUNTIME_DIR", &dir)
-            .args([
-                "--output",
-                "text",
-                "source",
-                "format-source",
-                "--no-cache",
-                "--file",
-            ])
-            .arg(&file)
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8(output.stdout).unwrap()
-    };
-    let local = run(&["--no-daemon"]);
-    assert_eq!(run(&[]), local);
-    std::fs::write(&file, "def served:Nat:=2\ntheorem t:served=2:=rfl\n").unwrap();
-    assert_eq!(run(&[]), run(&["--no-daemon"]));
-    let stop = Command::new(binary)
-        .env("XDG_RUNTIME_DIR", &dir)
-        .args(["daemon", "stop-daemon"])
-        .output()
-        .unwrap();
-    assert!(stop.status.success());
-    assert!(daemon.wait().unwrap().success());
-    std::fs::remove_dir_all(dir).unwrap();
-}
-
-#[test]
 fn paths_reuse_one_process_for_shared_imports() {
     use std::process::Command;
     let dir = std::env::temp_dir().join(format!("leanwisp-shared-{}", std::process::id()));

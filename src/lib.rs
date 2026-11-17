@@ -960,17 +960,9 @@ type PoolKey = (Option<std::path::PathBuf>, Vec<String>);
 pub struct Pool {
     adapters: Vec<(PoolKey, Adapter)>,
     session: u64,
-    capacity: usize,
 }
 
 impl Pool {
-    pub fn with_capacity(capacity: usize) -> Pool {
-        Pool {
-            capacity,
-            ..Pool::default()
-        }
-    }
-
     fn take(
         &mut self,
         project: Option<&std::path::Path>,
@@ -992,7 +984,7 @@ impl Pool {
     fn put(&mut self, key: Option<PoolKey>, adapter: Adapter) {
         if let Some(key) = key {
             self.adapters.push((key, adapter));
-            if self.adapters.len() > self.capacity.max(2) {
+            if self.adapters.len() > 1 {
                 self.adapters.remove(0);
             }
         }

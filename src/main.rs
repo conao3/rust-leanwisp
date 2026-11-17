@@ -30,23 +30,6 @@ enum Commands {
         #[command(subcommand)]
         command: Source,
     },
-    Daemon {
-        #[command(subcommand)]
-        command: Daemon,
-    },
-}
-#[derive(Subcommand)]
-enum Daemon {
-    /// Serve formatting requests on a Unix socket, keeping Lean processes loaded.
-    StartDaemon(DaemonOptions),
-    /// Stop a running daemon.
-    StopDaemon(DaemonOptions),
-}
-#[derive(clap::Args)]
-struct DaemonOptions {
-    /// Socket path (default: $XDG_RUNTIME_DIR/leanwisp.sock, else /tmp/leanwisp-UID.sock).
-    #[arg(long)]
-    socket: Option<PathBuf>,
 }
 #[derive(Subcommand)]
 enum Source {
@@ -91,11 +74,6 @@ struct Options {
     cache: bool,
     #[arg(long, overrides_with = "cache")]
     no_cache: bool,
-    /// Send the request to a running daemon when one is available.
-    #[arg(long, overrides_with = "no_daemon")]
-    daemon: bool,
-    #[arg(long, overrides_with = "daemon")]
-    no_daemon: bool,
 }
 
 #[derive(Deserialize)]
@@ -156,13 +134,7 @@ fn format_text(
     {
         return Ok(formatted);
     }
-    let formatted = match (!opts.no_daemon && opts.input.paths.is_none())
-        .then(|| ask_daemon(&socket_path(None), source, width, project.as_deref()))
-        .flatten()
-    {
-        Some(result) => result?,
-        None => leanwisp::format_document_with(pool, source, width, project.as_deref())?,
-    };
+    let formatted = leanwisp::format_document_with(pool, source, width, project.as_deref())?;
     if let Some(key) = key
         && let Some(dir) = key.parent()
         && std::fs::create_dir_all(dir).is_ok()
@@ -314,27 +286,64 @@ fn lean_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
-fn run_paths(opts: &Options, paths: &[PathBuf]) -> Result<Vec<Report>, String> {
-    let files = lean_files(paths)?;
+fn schedule(files: &[PathBuf], jobs: usize) -> Vec<Vec<usize>> {
     let mut groups: std::collections::BTreeMap<Option<Vec<String>>, Vec<usize>> =
         Default::default();
+    let mut sizes = Vec::with_capacity(files.len());
     for (i, file) in files.iter().enumerate() {
-        let key = std::fs::read_to_string(file)
-            .ok()
-            .and_then(|s| leanwisp::imported_modules(&s));
+        let source = std::fs::read_to_string(file).ok();
+        sizes.push(source.as_ref().map_or(0, String::len) as u64 + 1);
+        let key = source.and_then(|s| leanwisp::imported_modules(&s));
         groups.entry(key).or_default().push(i);
     }
+    let weight = |group: &[usize]| 32_000 + group.iter().map(|&i| sizes[i]).sum::<u64>();
+    let makespan = |groups: &[Vec<usize>]| {
+        let mut weights: Vec<u64> = groups.iter().map(|g| weight(g)).collect();
+        weights.sort_unstable_by(|a, b| b.cmp(a));
+        let mut loads = vec![0; jobs];
+        for w in weights {
+            *loads.iter_mut().min().unwrap() += w;
+        }
+        loads.into_iter().max().unwrap_or(0)
+    };
     let mut groups: Vec<Vec<usize>> = groups.into_values().collect();
-    groups.sort_by_key(|g| std::cmp::Reverse(g.len()));
+    while let Some(heaviest) = (0..groups.len())
+        .filter(|&g| groups[g].len() > 1)
+        .max_by_key(|&g| weight(&groups[g]))
+    {
+        let mut split = groups.clone();
+        let mut group = split.swap_remove(heaviest);
+        group.sort_by_key(|&i| std::cmp::Reverse(sizes[i]));
+        let (mut left, mut right) = (Vec::new(), Vec::new());
+        for i in group {
+            if weight(&left) <= weight(&right) {
+                left.push(i);
+            } else {
+                right.push(i);
+            }
+        }
+        split.push(left);
+        split.push(right);
+        if makespan(&split) > makespan(&groups) {
+            break;
+        }
+        groups = split;
+    }
+    groups.sort_by_key(|g| std::cmp::Reverse(weight(g)));
+    groups
+}
+
+fn run_paths(opts: &Options, paths: &[PathBuf]) -> Result<Vec<Report>, String> {
+    let files = lean_files(paths)?;
+    let jobs = opts
+        .jobs
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, usize::from))
+        .clamp(1, 64);
+    let groups = schedule(&files, jobs);
     let next = std::sync::atomic::AtomicUsize::new(0);
     let reports = std::sync::Mutex::new(Vec::new());
     std::thread::scope(|scope| {
-        for _ in 0..opts
-            .jobs
-            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, usize::from))
-            .clamp(1, 64)
-            .min(groups.len().max(1))
-        {
+        for _ in 0..jobs.min(groups.len().max(1)) {
             scope.spawn(|| {
                 let mut pool = leanwisp::Pool::default();
                 loop {
@@ -382,100 +391,9 @@ fn warn_kept(report: &Report) {
     }
 }
 
-fn socket_path(socket: Option<&Path>) -> PathBuf {
-    if let Some(socket) = socket {
-        return socket.to_owned();
-    }
-    match std::env::var_os("XDG_RUNTIME_DIR") {
-        Some(dir) => PathBuf::from(dir).join("leanwisp.sock"),
-        None => PathBuf::from(format!("/tmp/leanwisp-{}.sock", unsafe { libc::getuid() })),
-    }
-}
-
-fn ask_daemon(
-    socket: &Path,
-    source: &str,
-    width: usize,
-    project: Option<&Path>,
-) -> Option<Result<leanwisp::Formatted, String>> {
-    use std::io::BufRead;
-    let mut stream = std::os::unix::net::UnixStream::connect(socket).ok()?;
-    let request = json!({
-        "Source": source,
-        "Width": width,
-        "Project": project,
-        "Version": env!("CARGO_PKG_VERSION"),
-        "Syntax": std::env::var("LEANWISP_SYNTAX").unwrap_or_default(),
-    });
-    writeln!(stream, "{request}").ok()?;
-    let mut line = String::new();
-    std::io::BufReader::new(&stream).read_line(&mut line).ok()?;
-    let response: serde_json::Value = serde_json::from_str(&line).ok()?;
-    if let Some(error) = response.get("Error").and_then(serde_json::Value::as_str) {
-        return Some(Err(error.to_owned()));
-    }
-    Some(serde_json::from_value(response).map_err(|e| e.to_string()))
-}
-
-fn run_daemon(command: Daemon) -> Result<i32, String> {
-    use std::io::BufRead;
-    let (Daemon::StartDaemon(opts) | Daemon::StopDaemon(opts)) = &command;
-    let socket = socket_path(opts.socket.as_deref());
-    if let Daemon::StopDaemon(_) = command {
-        let mut stream = std::os::unix::net::UnixStream::connect(&socket)
-            .map_err(|e| format!("{}: {e}", socket.display()))?;
-        writeln!(stream, "{}", json!({"Stop": true})).map_err(|e| e.to_string())?;
-        println!("{}", json!({"Socket": socket, "Stopped": true}));
-        return Ok(0);
-    }
-    if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
-        return Err(format!("{}: a daemon is already running", socket.display()));
-    }
-    let _ = std::fs::remove_file(&socket);
-    let listener = std::os::unix::net::UnixListener::bind(&socket)
-        .map_err(|e| format!("{}: {e}", socket.display()))?;
-    println!("{}", json!({"Socket": socket}));
-    let mut pool = leanwisp::Pool::with_capacity(4);
-    for stream in listener.incoming() {
-        let Ok(mut stream) = stream else { continue };
-        let mut line = String::new();
-        if std::io::BufReader::new(&stream)
-            .read_line(&mut line)
-            .is_err()
-        {
-            continue;
-        }
-        let Ok(request) = serde_json::from_str::<serde_json::Value>(&line) else {
-            continue;
-        };
-        if request.get("Stop").is_some() {
-            break;
-        }
-        if request["Version"] != env!("CARGO_PKG_VERSION")
-            || request["Syntax"] != std::env::var("LEANWISP_SYNTAX").unwrap_or_default()
-        {
-            continue;
-        }
-        let source = request["Source"].as_str().unwrap_or_default();
-        let width = request["Width"].as_u64().unwrap_or(100) as usize;
-        let project = request["Project"].as_str().map(PathBuf::from);
-        let response =
-            match leanwisp::format_document_with(&mut pool, source, width, project.as_deref()) {
-                Ok(formatted) => serde_json::to_value(formatted).unwrap_or_default(),
-                Err(error) => json!({ "Error": error }),
-            };
-        let _ = writeln!(stream, "{response}");
-    }
-    let _ = std::fs::remove_file(&socket);
-    Ok(0)
-}
-
 fn run(cli: Cli) -> Result<i32, String> {
     leanwisp::DEBUG.store(cli.debug, std::sync::atomic::Ordering::Relaxed);
-    let command = match cli.command {
-        Commands::Source { command } => command,
-        Commands::Daemon { command } => return run_daemon(command),
-    };
+    let Commands::Source { command } = cli.command;
     let check = matches!(command, Source::CheckSource(_));
     let (Source::FormatSource(opts) | Source::CheckSource(opts)) = command;
     if opts.write && (check || opts.input.source.is_some()) {
@@ -580,5 +498,35 @@ fn main() {
             eprintln!("{error}");
             std::process::exit(254);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn schedule_splits_shared_imports_across_jobs() {
+        let dir = std::env::temp_dir().join(format!("leanwisp-schedule-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut files = Vec::new();
+        for (i, import) in ["A", "A", "A", "A", "B"].iter().enumerate() {
+            let file = dir.join(format!("F{i}.lean"));
+            std::fs::write(&file, format!("import {import}\ndef f : Nat := {i}\n")).unwrap();
+            files.push(file);
+        }
+        let sorted = |mut groups: Vec<Vec<usize>>| {
+            groups.iter_mut().for_each(|g| g.sort());
+            groups.sort();
+            groups
+        };
+        assert_eq!(
+            sorted(super::schedule(&files, 1)),
+            [vec![0, 1, 2, 3], vec![4]]
+        );
+        assert_eq!(
+            sorted(super::schedule(&files, 3)),
+            [vec![0, 2], vec![1, 3], vec![4]]
+        );
+        assert_eq!(sorted(super::schedule(&files, 8)).len(), 5);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

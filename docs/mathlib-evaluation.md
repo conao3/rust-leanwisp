@@ -96,3 +96,11 @@ Formatting one file at a time with one lean-fmt worker and no cache:
 | `Data/Nat/Basic.lean` | 0.56 s | 0.79 s |
 | `Order/Basic.lean` | 1.78 s | 4.79 s |
 | `Algebra/Group/Basic.lean` | 2.25 s | 6.73 s |
+
+Files that share imports are formatted in one Lean process, and `--paths` splits
+a large group of them across workers when that shortens the run. The 31 sample
+files all import different modules, so this does not apply to them. In a copy
+where 29 of the files import the same 89 modules (the union of the sample's
+imports), splitting the group across the 6 workers took 5.3–6.6 s, against
+8.4–8.8 s with the whole group in one process (three alternating runs each, load average
+about 4.7).
