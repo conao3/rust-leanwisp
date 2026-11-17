@@ -105,6 +105,13 @@ that file's own imports. With `--jobs 1` the sample takes 21.6–21.7 s, against
 alternating runs each). With 6 workers each worker formats about five files, so
 the gain is smaller: 6.8–7.0 s against 7.2–7.4 s.
 
+A run traced with timestamps from both the Rust workers and the Lean processes
+took 6.5 s with 6 workers. Of the 39.0 worker-seconds, building the file
+environments took 22.8 s, Lean parsing, formatting and validation 11.1 s, the
+Rust renderer and checks 2.7 s, starting the Lean processes 1.2 s, and workers
+waiting for the last worker 1.1 s. Three traced runs under load average 4–7
+gave the same shares within 2 percentage points.
+
 Formatting one file at a time with one lean-fmt worker and no cache:
 
 | File | Leanwisp | lean-fmt |
