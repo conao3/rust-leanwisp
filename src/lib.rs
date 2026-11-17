@@ -1,3 +1,10 @@
+pub mod cache;
+pub mod fallback;
+pub mod policy;
+pub mod schedule;
+
+use fallback::{Blame, Keep};
+use leanfran::Nat;
 use serde::Deserialize;
 use serde_json::Value;
 use std::io::Write;
@@ -693,10 +700,12 @@ fn trace(message: impl FnOnce() -> String) {
     }
 }
 
-#[derive(Default)]
-struct Keep {
-    verbatim: Vec<usize>,
-    lines: Vec<usize>,
+fn nat(value: usize) -> Nat {
+    Nat::from(value as u64)
+}
+
+fn index(value: Nat) -> usize {
+    u64::try_from(value).expect("an index fits in 64 bits") as usize
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, Deserialize)]
@@ -713,34 +722,15 @@ pub struct Formatted {
 }
 
 enum Failure {
-    Command(usize, String),
     Commands(Vec<usize>, String),
     Fatal(String),
 }
 
-fn command_trees(trees: &[String]) -> &[String] {
-    trees.get(1..).unwrap_or(&[])
-}
-
-fn tree_difference(original: &Parsed, other: &Parsed, reason: &str) -> Failure {
-    let (a, b) = (command_trees(&original.trees), command_trees(&other.trees));
-    if a.len() == b.len() && !a.is_empty() {
-        let all: Vec<usize> = (0..a.len()).filter(|&i| a[i] != b[i]).collect();
-        if !all.is_empty() {
-            return Failure::Commands(all, reason.into());
-        }
+fn failure(blame: Blame, reason: &str) -> Failure {
+    match blame {
+        Blame::Commands(indices) => Failure::Commands(indices, reason.into()),
+        Blame::File => Failure::Fatal(format!("{reason}; input unchanged")),
     }
-    match (0..a.len().min(b.len())).find(|&i| a[i] != b[i]) {
-        Some(i) => Failure::Command(i, reason.into()),
-        None if a.len() != b.len() && !a.is_empty() && !b.is_empty() => {
-            Failure::Command(a.len().min(b.len()) - 1, reason.into())
-        }
-        None => Failure::Fatal(format!("{reason}; input unchanged")),
-    }
-}
-
-fn command_at(starts: &[usize], offset: usize) -> usize {
-    starts.iter().rposition(|&s| s <= offset).unwrap_or(0)
 }
 
 fn error_offset(text: &str, message: &str) -> Option<usize> {
@@ -777,12 +767,11 @@ fn reparse(
             let context: Vec<_> = text.lines().skip(line.saturating_sub(3)).take(6).collect();
             format!("reparse failed: {message}\n{}", context.join("\n"))
         });
-        match (starts, error_offset(text, &message)) {
-            (Some(starts), Some(offset)) => Failure::Command(
-                command_at(&starts, offset),
-                "formatted text does not parse".into(),
-            ),
-            _ => Failure::Fatal(message),
+        match fallback::parse_blame(starts.as_deref(), error_offset(text, &message)) {
+            Blame::Commands(indices) => {
+                Failure::Commands(indices, "formatted text does not parse".into())
+            }
+            Blame::File => Failure::Fatal(message),
         }
     })
 }
@@ -815,10 +804,14 @@ fn attempt(
         Some(tokens) => tokens,
         None => {
             let clean = reparse(adapter, &rendered, starts, keep, false)?;
-            if original.trees != clean.trees || original.tokens.len() != clean.tokens.len() {
-                return Err(tree_difference(
-                    &original,
-                    &clean,
+            if let Some(blame) = fallback::syntax_verdict(
+                &original.trees,
+                &clean.trees,
+                original.tokens.len(),
+                clean.tokens.len(),
+            ) {
+                return Err(failure(
+                    blame,
                     "formatting would change the Lean syntax tree",
                 ));
             }
@@ -830,21 +823,28 @@ fn attempt(
         restore_comments_shifted(source, &original.tokens, &rendered, &clean, &mut starts);
     let starts = Some(starts);
     let checked = reparse(adapter, &formatted, starts, keep, true)?;
-    if original.trees != checked.trees || original.tokens.len() != checked.tokens.len() {
-        return Err(tree_difference(
-            &original,
-            &checked,
+    if let Some(blame) = fallback::syntax_verdict(
+        &original.trees,
+        &checked.trees,
+        original.tokens.len(),
+        checked.tokens.len(),
+    ) {
+        return Err(failure(
+            blame,
             "formatting would change the Lean syntax tree",
         ));
     }
-    if comments(&original.trivia) != comments(&checked.trivia) {
-        let (a, b) = (
-            command_comments(source, &original),
-            command_comments(&formatted, &checked),
-        );
-        return Err(match (0..a.len().min(b.len())).find(|&i| a[i] != b[i]) {
-            Some(i) => Failure::Command(i, "formatting would change comments".into()),
-            None => Failure::Fatal(
+    if let Some(blame) = fallback::comment_verdict(
+        comments(&original.trivia),
+        comments(&checked.trivia),
+        command_comments(source, &original),
+        command_comments(&formatted, &checked),
+    ) {
+        return Err(match blame {
+            Blame::Commands(indices) => {
+                Failure::Commands(indices, "formatting would change comments".into())
+            }
+            Blame::File => Failure::Fatal(
                 "formatting would change comment contents or ordering; input unchanged".into(),
             ),
         });
@@ -857,29 +857,28 @@ fn attempt(
         Some(tokens) => tokens,
         None => {
             let next_clean = reparse(adapter, &next, starts, keep, false)?;
-            if checked.trees != next_clean.trees || checked.tokens.len() != next_clean.tokens.len()
-            {
-                return Err(tree_difference(
-                    &checked,
-                    &next_clean,
-                    "formatter did not reach a stable layout",
-                ));
+            if let Some(blame) = fallback::syntax_verdict(
+                &checked.trees,
+                &next_clean.trees,
+                checked.tokens.len(),
+                next_clean.tokens.len(),
+            ) {
+                return Err(failure(blame, "formatter did not reach a stable layout"));
             }
             next_clean.tokens
         }
     };
     let settled = restore_comments(&formatted, &checked.tokens, &next, &next_clean);
-    if settled != formatted {
-        let offset = formatted
+    let difference = (settled != formatted).then(|| {
+        formatted
             .bytes()
             .zip(settled.bytes())
             .position(|(a, b)| a != b)
-            .unwrap_or(formatted.len().min(settled.len()));
-        let starts: Vec<usize> = checked.commands.iter().map(|c| c[0]).collect();
-        return Err(Failure::Command(
-            command_at(&starts, offset),
-            "formatter did not reach a stable layout".into(),
-        ));
+            .unwrap_or(formatted.len().min(settled.len()))
+    });
+    let starts: Vec<usize> = checked.commands.iter().map(|c| c[0]).collect();
+    if let Some(blame) = fallback::stability_verdict(&starts, difference) {
+        return Err(failure(blame, "formatter did not reach a stable layout"));
     }
     Ok((formatted, original))
 }
@@ -901,27 +900,6 @@ pub fn format_source_in(
             kept.line, kept.reason
         )),
     }
-}
-
-fn escalate(
-    keep: &mut Keep,
-    reasons: &mut std::collections::HashMap<usize, String>,
-    indices: &[usize],
-    reason: String,
-) -> Result<(), String> {
-    for &index in indices {
-        trace(|| format!("command {index}: {reason}"));
-        if keep.verbatim.contains(&index) {
-            return Err(format!("{reason}; input unchanged"));
-        }
-        if keep.lines.contains(&index) {
-            keep.verbatim.push(index);
-        } else {
-            keep.lines.push(index);
-            reasons.insert(index, reason.clone());
-        }
-    }
-    Ok(())
 }
 
 pub fn imported_modules(source: &str) -> Option<Vec<String>> {
@@ -1006,8 +984,12 @@ pub fn format_document_with(
     width: usize,
     project: Option<&std::path::Path>,
 ) -> Result<Formatted, String> {
-    if !(20..=300).contains(&width) {
-        return Err("line width must be between 20 and 300".into());
+    if !policy::valid_width(width) {
+        return Err(format!(
+            "line width must be between {} and {}",
+            policy::min_width(),
+            policy::max_width()
+        ));
     }
     let mut adapter = pool.take(project)?;
     let result = format_with(&mut adapter, source, width);
@@ -1035,11 +1017,11 @@ fn format_with(adapter: &mut Adapter, source: &str, width: usize) -> Result<Form
                         verbatim: true,
                     })
                     .collect();
-                for index in original.lines.iter().filter(|i| !keep.verbatim.contains(i)) {
-                    if let Some(range) = original.commands.get(*index) {
+                for index in fallback::line_kept(&original.lines, &keep.verbatim) {
+                    if let Some(range) = original.commands.get(index) {
                         kept.push(Kept {
                             line: line_of(range[0]),
-                            reason: reasons.get(index).cloned().unwrap_or_default(),
+                            reason: reasons.get(&index).cloned().unwrap_or_default(),
                             verbatim: false,
                         });
                     }
@@ -1050,11 +1032,16 @@ fn format_with(adapter: &mut Adapter, source: &str, width: usize) -> Result<Form
                     kept,
                 });
             }
-            Err(Failure::Command(index, reason)) => {
-                escalate(&mut keep, &mut reasons, &[index], reason)?
-            }
             Err(Failure::Commands(indices, reason)) => {
-                escalate(&mut keep, &mut reasons, &indices, reason)?
+                for index in &indices {
+                    trace(|| format!("command {index}: {reason}"));
+                }
+                let next = fallback::escalate(&keep, &indices)
+                    .ok_or_else(|| format!("{reason}; input unchanged"))?;
+                for index in &next.lines[keep.lines.len()..] {
+                    reasons.insert(*index, reason.clone());
+                }
+                keep = next;
             }
             Err(Failure::Fatal(message)) => return Err(message),
         }

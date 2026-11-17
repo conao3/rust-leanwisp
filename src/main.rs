@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use leanwisp::policy::{self, Outcome, Status};
 use serde::Deserialize;
 use serde_json::json;
 use std::{
@@ -99,16 +100,18 @@ fn find_upward(start: &Path, names: &[&str]) -> Option<PathBuf> {
 }
 
 fn line_width(opts: &Options, start: &Path) -> Result<usize, String> {
-    if let Some(width) = opts.line_width {
-        return Ok(width);
-    }
-    let Some(dir) = find_upward(start, &["leanwisp.toml"]) else {
-        return Ok(100);
+    let configured = match (opts.line_width, find_upward(start, &["leanwisp.toml"])) {
+        (None, Some(dir)) => {
+            let path = dir.join("leanwisp.toml");
+            let text =
+                std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let config: Config =
+                toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+            config.line_width
+        }
+        _ => None,
     };
-    let path = dir.join("leanwisp.toml");
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let config: Config = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(config.line_width.unwrap_or(100))
+    Ok(policy::line_width(opts.line_width, configured))
 }
 
 fn format_text(
@@ -152,15 +155,6 @@ fn format_text(
     Ok(formatted)
 }
 
-fn fnv(hash: &mut u64, bytes: &[u8]) {
-    for byte in bytes {
-        *hash ^= u64::from(*byte);
-        *hash = hash.wrapping_mul(0x100000001b3);
-    }
-    *hash ^= 0xff;
-    *hash = hash.wrapping_mul(0x100000001b3);
-}
-
 fn lean_path(dir: &Path) -> Option<String> {
     static PATHS: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<PathBuf, String>>,
@@ -184,41 +178,41 @@ fn cache_key(source: &str, width: usize, project: Option<&Path>) -> Option<PathB
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?
         .join("leanwisp");
-    let mut hash = 0xcbf29ce484222325u64;
-    fnv(&mut hash, env!("CARGO_PKG_VERSION").as_bytes());
-    fnv(
-        &mut hash,
-        std::env::var("LEANWISP_SYNTAX")
-            .unwrap_or_default()
-            .as_bytes(),
-    );
-    fnv(&mut hash, &width.to_le_bytes());
-    fnv(&mut hash, source.as_bytes());
     let search = match project {
         Some(dir) => lean_path(dir)?,
         None => std::env::var("LEAN_PATH").unwrap_or_default(),
     };
+    let mut imports = Vec::new();
     for module in leanwisp::imported_modules(source)? {
         let relative: PathBuf = module
             .split('.')
             .collect::<PathBuf>()
             .with_extension("olean");
-        fnv(&mut hash, module.as_bytes());
+        let mut stamp = None;
         for dir in search.trim().split(':').filter(|d| !d.is_empty()) {
             let path = Path::new(dir).join(&relative);
             if let Ok(meta) = std::fs::metadata(&path) {
-                fnv(&mut hash, path.as_os_str().as_encoded_bytes());
-                fnv(&mut hash, &meta.len().to_le_bytes());
-                let modified = meta
-                    .modified()
-                    .ok()?
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .ok()?;
-                fnv(&mut hash, &modified.as_nanos().to_le_bytes());
+                stamp = Some(leanwisp::cache::Stamp {
+                    path: path.to_string_lossy().into_owned(),
+                    size: meta.len(),
+                    modified: meta
+                        .modified()
+                        .ok()?
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .ok()?,
+                });
                 break;
             }
         }
+        imports.push((module, stamp));
     }
+    let hash = leanwisp::cache::key(
+        env!("CARGO_PKG_VERSION"),
+        &std::env::var("LEANWISP_SYNTAX").unwrap_or_default(),
+        width,
+        source,
+        imports,
+    );
     Some(root.join(format!("{hash:016x}.json")))
 }
 
@@ -239,7 +233,7 @@ fn format_file(opts: &Options, path: &Path, pool: &mut leanwisp::Pool) -> Report
         report.changed = source != formatted.source;
         report.kept = formatted.kept;
         report.source = formatted.source;
-        if opts.write && report.changed {
+        if policy::writes(opts.write, report.changed) {
             if std::fs::read_to_string(path).map_err(|e| e.to_string())? != source {
                 return Err("file changed during formatting".into());
             }
@@ -287,63 +281,28 @@ fn lean_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
 }
 
 fn schedule(files: &[PathBuf], jobs: usize) -> Vec<Vec<usize>> {
-    let mut groups: std::collections::BTreeMap<Option<Vec<String>>, Vec<usize>> =
+    let mut groups: std::collections::BTreeMap<Option<Vec<String>>, Vec<(usize, usize)>> =
         Default::default();
-    let mut sizes = Vec::with_capacity(files.len());
     for (i, file) in files.iter().enumerate() {
         let source = std::fs::read_to_string(file).ok();
-        sizes.push(source.as_ref().map_or(0, String::len) as u64 + 1);
+        let size = source.as_ref().map_or(0, String::len) + 1;
         let key = source.and_then(|s| leanwisp::imported_modules(&s));
-        groups.entry(key).or_default().push(i);
+        groups.entry(key).or_default().push((i, size));
     }
-    let weight = |group: &[usize]| 32_000 + group.iter().map(|&i| sizes[i]).sum::<u64>();
-    let makespan = |groups: &[Vec<usize>]| {
-        let mut weights: Vec<u64> = groups.iter().map(|g| weight(g)).collect();
-        weights.sort_unstable_by(|a, b| b.cmp(a));
-        let mut loads = vec![0; jobs];
-        for w in weights {
-            *loads.iter_mut().min().unwrap() += w;
-        }
-        loads.into_iter().max().unwrap_or(0)
-    };
-    let mut groups: Vec<Vec<usize>> = groups.into_values().collect();
-    while let Some(heaviest) = (0..groups.len())
-        .filter(|&g| groups[g].len() > 1)
-        .max_by_key(|&g| weight(&groups[g]))
-    {
-        let mut split = groups.clone();
-        let mut group = split.swap_remove(heaviest);
-        group.sort_by_key(|&i| std::cmp::Reverse(sizes[i]));
-        let (mut left, mut right) = (Vec::new(), Vec::new());
-        for i in group {
-            if weight(&left) <= weight(&right) {
-                left.push(i);
-            } else {
-                right.push(i);
-            }
-        }
-        split.push(left);
-        split.push(right);
-        if makespan(&split) > makespan(&groups) {
-            break;
-        }
-        groups = split;
-    }
-    groups.sort_by_key(|g| std::cmp::Reverse(weight(g)));
-    groups
+    leanwisp::schedule::assign(jobs, groups.into_values().collect())
 }
 
 fn run_paths(opts: &Options, paths: &[PathBuf]) -> Result<Vec<Report>, String> {
     let files = lean_files(paths)?;
-    let jobs = opts
-        .jobs
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, usize::from))
-        .clamp(1, 64);
+    let jobs = policy::jobs(
+        opts.jobs,
+        std::thread::available_parallelism().map_or(1, usize::from),
+    );
     let groups = schedule(&files, jobs);
     let next = std::sync::atomic::AtomicUsize::new(0);
     let reports = std::sync::Mutex::new(Vec::new());
     std::thread::scope(|scope| {
-        for _ in 0..jobs.min(groups.len().max(1)) {
+        for _ in 0..policy::workers(jobs, groups.len()) {
             scope.spawn(|| {
                 let mut pool = leanwisp::Pool::default();
                 loop {
@@ -360,6 +319,13 @@ fn run_paths(opts: &Options, paths: &[PathBuf]) -> Result<Vec<Report>, String> {
     let mut reports = reports.into_inner().unwrap();
     reports.sort_by_key(|(i, _)| *i);
     Ok(reports.into_iter().map(|(_, r)| r).collect())
+}
+
+fn outcome(report: &Report) -> Outcome {
+    Outcome {
+        failed: report.error.is_some(),
+        changed: report.changed,
+    }
 }
 
 fn kept_mode(kept: &leanwisp::Kept) -> &'static str {
@@ -396,7 +362,7 @@ fn run(cli: Cli) -> Result<i32, String> {
     let Commands::Source { command } = cli.command;
     let check = matches!(command, Source::CheckSource(_));
     let (Source::FormatSource(opts) | Source::CheckSource(opts)) = command;
-    if opts.write && (check || opts.input.source.is_some()) {
+    if !policy::writable(opts.write, check, opts.input.source.is_some()) {
         return Err("--write requires format-source with --file or --paths".into());
     }
     if let Some(paths) = &opts.input.paths {
@@ -421,11 +387,11 @@ fn run(cli: Cli) -> Result<i32, String> {
                     println!("Status\tKept\tPath");
                 }
                 for r in &reports {
-                    let status = match (&r.error, r.changed, opts.write) {
-                        (Some(_), _, _) => "error",
-                        (None, true, true) => "formatted",
-                        (None, true, false) => "changed",
-                        (None, false, _) => "unchanged",
+                    let status = match policy::status(outcome(r), opts.write) {
+                        Status::Error => "error",
+                        Status::Formatted => "formatted",
+                        Status::Changed => "changed",
+                        Status::Unchanged => "unchanged",
                     };
                     let path = r.path.as_ref().map(|p| p.display().to_string());
                     println!("{status}\t{}\t{}", r.kept.len(), path.unwrap_or_default());
@@ -439,9 +405,11 @@ fn run(cli: Cli) -> Result<i32, String> {
                 eprintln!("{}: {error}", path.unwrap_or_default());
             }
         }
-        let failed = reports.iter().any(|r| r.error.is_some());
-        let changed = reports.iter().any(|r| r.changed && !opts.write);
-        return Ok(if failed || (check && changed) { 254 } else { 0 });
+        return Ok(policy::exit_code(
+            check,
+            opts.write,
+            reports.iter().map(outcome).collect(),
+        ));
     }
     let report = if let Some(path) = &opts.input.file {
         format_file(&opts, path, &mut leanwisp::Pool::default())
@@ -481,7 +449,7 @@ fn run(cli: Cli) -> Result<i32, String> {
             .map_err(|e| e.to_string())?,
         Output::Table => println!("Changed\tKept\n{}\t{}", report.changed, report.kept.len()),
     }
-    Ok(if check && report.changed { 254 } else { 0 })
+    Ok(policy::exit_code(check, opts.write, vec![outcome(&report)]))
 }
 fn main() {
     let cli = Cli::try_parse().unwrap_or_else(|e| {
@@ -528,5 +496,20 @@ mod tests {
         );
         assert_eq!(sorted(super::schedule(&files, 8)).len(), 5);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn schedule_handles_many_files_on_a_worker_stack() {
+        std::thread::spawn(|| {
+            let one: Vec<Vec<(usize, usize)>> =
+                vec![(0..100_000).map(|i| (i, i % 97 + 1)).collect()];
+            let groups = leanwisp::schedule::assign(6, one);
+            assert_eq!(groups.iter().map(Vec::len).sum::<usize>(), 100_000);
+            let many: Vec<Vec<(usize, usize)>> =
+                (0..100_000).map(|i| vec![(i, i % 97 + 1)]).collect();
+            assert_eq!(leanwisp::schedule::assign(6, many).len(), 100_000);
+        })
+        .join()
+        .unwrap();
     }
 }

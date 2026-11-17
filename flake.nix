@@ -7,6 +7,10 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    leanfran = {
+      url = "github:conao3/lean-leanfran/1bb464c6d419da8037698053f52dd23476a042d9";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
   outputs =
     inputs:
@@ -17,8 +21,9 @@
       ];
       imports = [ inputs.treefmt-nix.flakeModule ];
       perSystem =
-        { pkgs, ... }:
+        { pkgs, system, ... }:
         let
+          leanfran = inputs.leanfran.packages.${system}.rust-compiler;
           syntax = pkgs.stdenv.mkDerivation {
             pname = "leanwisp-syntax";
             version = "0.3.0";
@@ -52,7 +57,9 @@
               pkgs.lean4
               pkgs.gnumake
               pkgs.python315
+              leanfran
             ];
+            LEANFRAN_CLI = "${leanfran}/bin/leanfran";
             LEANWISP_SYNTAX = "${syntax}/bin/leanwisp-syntax";
           };
           packages.default = pkgs.rustPlatform.buildRustPackage {
@@ -62,6 +69,7 @@
             cargoLock.lockFile = ./Cargo.lock;
             nativeBuildInputs = [ pkgs.makeWrapper ];
             nativeCheckInputs = [ pkgs.lean4 ];
+            LEANFRAN_OFFLINE = "1";
             LEANWISP_SYNTAX = "${syntax}/bin/leanwisp-syntax";
             postInstall = "wrapProgram $out/bin/leanwisp --set LEANWISP_SYNTAX ${syntax}/bin/leanwisp-syntax --prefix PATH : ${
               pkgs.lib.makeBinPath [ pkgs.lean4 ]
