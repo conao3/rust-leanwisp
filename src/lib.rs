@@ -346,7 +346,7 @@ fn render_marked(doc: &Value, width: usize) -> (String, Vec<usize>) {
     let mut pending = 0;
     let mut explicit = false;
     let mut marks = Vec::new();
-    let mut braces = Vec::new();
+    let mut braces: Vec<usize> = Vec::new();
     while let Some(mut g) = groups.pop() {
         let Some(i) = g.items.pop() else { continue };
         let d = i.doc;
@@ -370,6 +370,11 @@ fn render_marked(doc: &Value, width: usize) -> (String, Vec<usize>) {
                 continue;
             }
             "group" => g.items.push(Item { doc: &d[1], ..i }),
+            "fieldcolumn" => {
+                if let Some(brace) = braces.last_mut() {
+                    *brace = (*brace).max(col);
+                }
+            }
             "text" => {
                 let s = d[1].as_str().unwrap_or("");
                 if s.chars().all(char::is_whitespace) && s.contains('\n') {
@@ -955,36 +960,31 @@ pub fn imported_modules(source: &str) -> Option<Vec<String>> {
     Some(modules)
 }
 
-type PoolKey = (Option<std::path::PathBuf>, Vec<String>);
-
 #[derive(Default)]
 pub struct Pool {
-    adapters: Vec<(PoolKey, Adapter)>,
+    adapters: Vec<(Option<std::path::PathBuf>, Adapter)>,
     session: u64,
 }
 
 impl Pool {
-    fn take(
-        &mut self,
-        project: Option<&std::path::Path>,
-        source: &str,
-    ) -> Result<(Option<PoolKey>, Adapter), String> {
+    fn take(&mut self, project: Option<&std::path::Path>) -> Result<Adapter, String> {
         self.session += 1;
-        let key = imported_modules(source).map(|m| (project.map(ToOwned::to_owned), m));
-        let found = key
-            .as_ref()
-            .and_then(|k| self.adapters.iter().position(|(key, _)| key == k));
+        let found = self
+            .adapters
+            .iter()
+            .position(|(key, _)| key.as_deref() == project);
         let mut adapter = match found {
             Some(i) => self.adapters.remove(i).1,
             None => Adapter::start(project)?,
         };
         adapter.session = self.session;
-        Ok((key, adapter))
+        Ok(adapter)
     }
 
-    fn put(&mut self, key: Option<PoolKey>, adapter: Adapter) {
-        if let Some(key) = key {
-            self.adapters.push((key, adapter));
+    fn put(&mut self, project: Option<&std::path::Path>, mut adapter: Adapter) {
+        if matches!(adapter.child.try_wait(), Ok(None)) {
+            self.adapters
+                .push((project.map(ToOwned::to_owned), adapter));
             if self.adapters.len() > 1 {
                 self.adapters.remove(0);
             }
@@ -1009,21 +1009,9 @@ pub fn format_document_with(
     if !(20..=300).contains(&width) {
         return Err("line width must be between 20 and 300".into());
     }
-    let (key, mut adapter) = pool.take(project, source)?;
+    let mut adapter = pool.take(project)?;
     let result = format_with(&mut adapter, source, width);
-    let result = match result {
-        Err(message) if message.contains("imports changed") => {
-            let mut fresh = Adapter::start(project)?;
-            fresh.session = pool.session;
-            let result = format_with(&mut fresh, source, width);
-            adapter = fresh;
-            result
-        }
-        result => result,
-    };
-    if result.is_ok() {
-        pool.put(key, adapter);
-    }
+    pool.put(project, adapter);
     result
 }
 

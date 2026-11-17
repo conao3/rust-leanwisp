@@ -78,7 +78,7 @@ is untested.
 ## Speed comparison
 
 The same 31 files were copied into one Lake project and checked on helios
-(6 CPUs, load average 4–8 from other work, both tools run back to back) with Leanwisp `source check-source --paths Mathlib` and
+(6 CPUs, load average 3–8 from other work, both tools run back to back) with Leanwisp `source check-source --paths Mathlib` and
 [lean-fmt](https://github.com/jcreinhold/lean-fmt) `57c2390` built for Lean
 4.35.0, `lean-fmt format --check <files>`, each with its default parallelism.
 "Uncached" removes `~/.cache/leanwisp` and `.lean-fmt-cache` first; "cached" is
@@ -86,8 +86,8 @@ the immediately following second run.
 
 | | Uncached | Cached |
 |---|---:|---:|
-| Leanwisp | 7.4 s | 0.08 s |
-| lean-fmt | 33.8 s | 23.6 s |
+| Leanwisp | 6.9 s | 0.09 s |
+| lean-fmt | 33.3 s | 26.6 s |
 
 Most of the uncached time is Lean loading each file's imports. Checking the 31
 files one at a time takes 31.9 s in total, and checking only their headers (the
@@ -97,6 +97,13 @@ takes 0.27 s, mostly loading `Init`. For the heaviest header in the sample,
 `importModules` spends about 0.5 s reading the `.olean` files, 0.4 s building
 the constant tables and 0.5 s initializing the environment extensions. Parsing,
 formatting and validating the 9,998 lines take the remaining 3.6 s.
+
+A worker's Lean process reads each `.olean` file once for all of its files and
+builds each file's environment from that data, applying Lean's import rules to
+that file's own imports. With `--jobs 1` the sample takes 21.6–21.7 s, against
+29.0–30.4 s when every file loads its imports in a fresh process (two
+alternating runs each). With 6 workers each worker formats about five files, so
+the gain is smaller: 6.8–7.0 s against 7.2–7.4 s.
 
 Formatting one file at a time with one lean-fmt worker and no cache:
 

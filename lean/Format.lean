@@ -10,11 +10,13 @@ def markDeclEq : Nat := 1
 def markAttrClose : Nat := 2
 def markWhere : Nat := 3
 def markAlternative : Nat := 4
+def markStructWith : Nat := 5
 def breakTagBase : Nat := 2 ^ 67
 def blockBreakTag : Nat := 2 ^ 68
 def commandTagBase : Nat := 2 ^ 69
 def attrLineTag : Nat := 2 ^ 70
 def softBlockTag : Nat := 2 ^ 70 + 1
+def fieldColumnTag : Nat := 2 ^ 70 + 2
 
 partial def fingerprint : Syntax → Json
   | .missing => toJson ("missing" : String)
@@ -33,6 +35,7 @@ partial def document : Std.Format → Json
       toJson (behavior == .fill)]
   | .tag tag child => if tag == attrLineTag then Json.arr #[toJson "attrline"]
       else if tag == softBlockTag then Json.arr #[toJson "softblock"]
+      else if tag == fieldColumnTag then Json.arr #[toJson "fieldcolumn"]
       else if tag >= commandTagBase then Json.arr #[toJson "command", toJson (tag - commandTagBase)]
       else if tag >= blockBreakTag then Json.arr #[toJson "block", toJson ((tag - blockBreakTag : Int) - 64)]
       else if breakTagBase <= tag then Json.arr #[toJson "break", toJson ((tag - breakTagBase : Int) - 64)]
@@ -70,6 +73,8 @@ def markLayout (kind : SyntaxNodeKind) (args : Array Syntax) : Array Syntax :=
   else if kind == `Lean.Parser.Tactic.first && args.size == 2 then
     args.modify 1 fun alts => alts.setArgs (alts.getArgs.map fun alt =>
       if alt.getNumArgs > 0 then alt.setArg 0 (markAtom markAlternative alt[0]) else alt)
+  else if kind == `Lean.Parser.Term.structInst && args.size > 1 && args[1]!.getNumArgs == 2 then
+    args.modify 1 fun source => source.setArg 1 (markAtom markStructWith source[1])
   else args
 
 -- Keep trivia out of width/indentation groups. Rust restores comment-bearing gaps
@@ -328,6 +333,9 @@ def layoutReplacements (source : String) (lengths : Std.HashMap Nat Nat) (conser
     else if token.code == markAlternative then
       if let some j := prev token.leaf then
         if isHardBreak leaves[j]! then result := result.insert j .line
+    else if token.code == markStructWith then
+      if let some j := next token.leaf then
+        if isSpace leaves[j]! then result := result.insert j (leaves[j]! ++ .tag fieldColumnTag .nil)
   for i in [1:tokens.size] do
     let (before, after) := (tokens[i - 1]!, tokens[i]!)
     for j in [before.leaf:after.leaf] do
@@ -539,7 +547,115 @@ def commonPrefix (a b : ByteArray) : Nat := Id.run do
   while i < n && a.get! i == b.get! i do i := i + 1
   return i
 
-unsafe def formatRequest (cache : IO.Ref (Option (String × Environment))) (memo : IO.Ref Memo)
+abbrev Parts := Array (ModuleData × CompactedRegion)
+
+structure LoadedModule extends EffectiveImport where
+  parts : Parts
+  irParts : Parts
+  needsIRTrans : Bool
+
+structure LoadedState where
+  moduleNameMap : Std.HashMap Name LoadedModule := {}
+  moduleNames : Array Name := #[]
+
+structure Loaded where
+  data : Std.HashMap Name Parts := {}
+  ir : Std.HashMap Name Parts := {}
+
+def LoadedModule.mainModule? (m : LoadedModule) : Option ModuleData :=
+  if m.hasData then
+    let isModule := m.parts[0]?.any (·.1.isModule)
+    let level : OLeanLevel := if isModule && m.importAll then .private else .exported
+    m.parts[level.ctorIdx]?.map (·.1)
+  else
+    m.irParts.back?.map (·.1)
+
+unsafe def readData (loaded : IO.Ref Loaded) (mod : Name) : IO Parts := do
+  if let some parts := (← loaded.get).data[mod]? then return parts
+  let mFile ← findOLean mod
+  unless (← mFile.pathExists) do
+    throw <| IO.userError s!"object file '{mFile}' of module {mod} does not exist"
+  let main ← CompactedRegion.read (α := ModuleData) mFile #[]
+  let parts ← if !main.1.isModule then pure #[main] else do
+    let server ← CompactedRegion.read (α := ModuleData)
+      (OLeanLevel.server.adjustFileName mFile) #[main.2]
+    let priv ← CompactedRegion.read (α := ModuleData)
+      (OLeanLevel.private.adjustFileName mFile) #[main.2, server.2]
+    pure #[main, server, priv]
+  loaded.modify fun l => { l with data := l.data.insert mod parts }
+  return parts
+
+unsafe def readIR (loaded : IO.Ref Loaded) (mod : Name) : IO Parts := do
+  if let some parts := (← loaded.get).ir[mod]? then return parts
+  let mFile ← findOLean mod
+  let irSigFile := mFile.withExtension "ir.sig"
+  let parts ← if !(← irSigFile.pathExists) then pure #[] else do
+    let irSig ← CompactedRegion.read (α := ModuleData) irSigFile #[]
+    let ir ← CompactedRegion.read (α := ModuleData) (mFile.withExtension "ir") #[irSig.2]
+    pure #[irSig, ir]
+  loaded.modify fun l => { l with ir := l.ir.insert mod parts }
+  return parts
+
+unsafe def loadImports (loaded : IO.Ref Loaded) (globalLevel : OLeanLevel)
+    (imports : Array Import) : StateRefT LoadedState IO Unit :=
+  go imports true (globalLevel < .private) true false
+where
+  go (imports : Array Import) (importAll isExported needsData needsIRTrans : Bool) :
+      StateRefT LoadedState IO Unit := do
+    for i in imports do
+      let needsData := needsData && (i.isExported || importAll)
+      let importAll := globalLevel == .private || importAll && i.importAll
+      let isExported := isExported && i.isExported
+      let needsIRTrans := needsIRTrans || (needsData && i.isMeta)
+      let needsIR := needsIRTrans || importAll || globalLevel > .exported
+      if !needsData && !needsIR then
+        continue
+      let irPhases : IRPhases :=
+        if importAll then .all else if needsIRTrans then .comptime else .runtime
+      let goRec (mod : LoadedModule) := do
+        if let some data := mod.mainModule? then
+          go data.imports importAll isExported needsData needsIRTrans
+      if let some mod := (← get).moduleNameMap[i.module]? then
+        let importAll := importAll || mod.importAll
+        let isExported := isExported || mod.isExported
+        let needsData := needsData || mod.hasData
+        let needsIRTrans := needsIRTrans || mod.needsIRTrans
+        let needsIR := needsIRTrans || importAll
+        let irPhases := if irPhases == mod.irPhases then irPhases else .all
+        let parts ← if needsData && mod.parts.isEmpty then readData loaded i.module
+          else pure mod.parts
+        let irParts ← if needsIR && mod.irParts.isEmpty then readIR loaded i.module
+          else pure mod.irParts
+        if importAll != mod.importAll || isExported != mod.isExported ||
+            needsIRTrans != mod.needsIRTrans || needsData != mod.hasData ||
+            irPhases != mod.irPhases then
+          let mod := { mod with
+            importAll, isExported, irPhases, parts, irParts, hasData := needsData, needsIRTrans }
+          modify fun s => { s with moduleNameMap := s.moduleNameMap.insert i.module mod }
+          goRec mod
+        continue
+      let parts ← if needsData then readData loaded i.module else pure #[]
+      let irParts ← if needsIR then readIR loaded i.module else pure #[]
+      let mod : LoadedModule :=
+        { i with importAll, isExported, irPhases, parts, irParts, needsIRTrans, hasData := needsData }
+      goRec mod
+      modify fun s => { s with
+        moduleNameMap := s.moduleNameMap.insert i.module mod
+        moduleNames := s.moduleNames.push i.module }
+
+unsafe def importShared (loaded : IO.Ref Loaded) (imports : Array Import) (level : OLeanLevel) :
+    IO Environment := do
+  let ((), s) ← (loadImports loaded level imports).run {}
+  if level < .private then
+    for i in imports do
+      if let some data := s.moduleNameMap[i.module]?.bind (·.mainModule?) then
+        if !data.isModule then
+          throw <| IO.userError s!"cannot import non-`module` {i.module} from `module`"
+  enableInitializersExecution
+  withImporting <| finalizeImport (unsafeCast s) imports {} 0 (leakEnv := false) (loadExts := true)
+    (level := level)
+
+unsafe def formatRequest (loaded : IO.Ref Loaded) (cache : IO.Ref (Option (String × Environment))) (memo : IO.Ref Memo)
     (runs : IO.Ref (Array Run)) (session : IO.Ref Nat) (req : Request) : IO Json := do
   if req.session != (← session.get) then
     session.set req.session
@@ -555,11 +671,15 @@ unsafe def formatRequest (cache : IO.Ref (Option (String × Environment))) (memo
   let level := if Elab.HeaderSyntax.isModule header then .exported else .private
   let imports := Elab.headerToImports header
   let key := toString (repr imports) ++ toString (Elab.HeaderSyntax.isModule header)
-  let env ← match ← cache.get with
-    | some (cached, env) =>
-      if cached == key then pure env else throw (IO.userError "imports changed")
+  let cached := match ← cache.get with
+    | some (cached, env) => if cached == key then some env else none
+    | none => none
+  let env ← match cached with
+    | some env => pure env
     | none => do
-      let env ← importModules (level := level) (loadExts := true) (leakEnv := true) imports {} 0
+      cache.set none
+      runs.set #[]
+      let env ← importShared loaded imports level
       cache.set (some (key, env))
       pure env
   let mut reused : Array Entry := #[]
@@ -608,6 +728,7 @@ unsafe def formatRequest (cache : IO.Ref (Option (String × Environment))) (memo
 unsafe def main : IO Unit := do
   initSearchPath (← findSysroot)
   enableInitializersExecution
+  let loaded ← IO.mkRef {}
   let cache ← IO.mkRef none
   let memo ← IO.mkRef {}
   let runs ← IO.mkRef #[]
@@ -619,7 +740,7 @@ unsafe def main : IO Unit := do
     if line.isEmpty then break
     let response ← try
         let req ← IO.ofExcept (Json.parse line >>= fromJson?)
-        formatRequest cache memo runs session req
+        formatRequest loaded cache memo runs session req
       catch ex => pure (Json.mkObj [("Error", toJson ex.toString)])
     stdout.putStrLn response.compress
     stdout.flush

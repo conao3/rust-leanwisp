@@ -108,14 +108,17 @@ formatted in parallel, one per CPU unless `--jobs N` is given.
 
 ## Speed
 
-A Lean process loads a file's imports once and serves every validation parse of
-that file. `--paths` runs `--jobs` workers (default: the number of CPUs); files
-that share imports go to the same Lean process, and a large group of such files
-is split across workers whenever that shortens the run despite loading the
-imports once more. The process keeps the parse of each command, so a reparse
-after a fallback only parses the text after the first change, and command
-layouts are reused across files when the preceding syntax-changing commands are
-unchanged. Commands are
+Each `--paths` worker (`--jobs`, default: the number of CPUs) keeps one Lean
+process for all of its files. The process reads each imported module's `.olean`
+files once and builds every file's environment from that data with Lean's own
+import rules, so a file sees exactly the modules it imports. A file's
+environment serves every validation parse of that file and the following files
+with the same imports. Files that share imports go to the same worker, and a
+large group of them is split across workers whenever that shortens the run.
+
+The process keeps the parse of each command, so a reparse after a fallback only
+parses the text after the first change, and command layouts are reused across
+files when the preceding syntax-changing commands are unchanged. Commands are
 formatted in parallel, and parses whose layout is not needed skip formatting.
 Comment restoration and the idempotence check align tokens instead of
 reparsing. Results are
@@ -130,8 +133,8 @@ machine):
 
 | | Uncached | Cached |
 |---|---:|---:|
-| Leanwisp | 7.4 s | 0.08 s |
-| [lean-fmt](https://github.com/jcreinhold/lean-fmt) `57c2390` (`format --check`) | 33.8 s | 23.6 s |
+| Leanwisp | 6.9 s | 0.09 s |
+| [lean-fmt](https://github.com/jcreinhold/lean-fmt) `57c2390` (`format --check`) | 33.3 s | 26.6 s |
 
 ## CLI
 

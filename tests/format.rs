@@ -590,3 +590,93 @@ fn imported_modules_skip_comments_in_the_header() {
         Some(vec!["D".to_owned()])
     );
 }
+
+#[test]
+fn structure_update_fields_align_after_with() {
+    let fields = [
+        "aaaaaaaaaaaa",
+        "bbbbbbbbbbbb",
+        "cccccccccccc",
+        "dddddddddddd",
+        "eeeeeeeeeeee",
+    ];
+    let source = format!(
+        "structure P where\n{}\ndef f (p : P) ({} : Nat) : P :=\n  {{ p with {}, ffffffffffff := 1, gggggggggggg }}\n",
+        fields
+            .iter()
+            .chain(&["ffffffffffff", "gggggggggggg"])
+            .map(|f| format!("  {f} : Nat"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        fields
+            .iter()
+            .chain(&["gggggggggggg"])
+            .copied()
+            .collect::<Vec<_>>()
+            .join(" "),
+        fields.join(", "),
+    );
+    let result = format_document(&source, 100, None).unwrap();
+    assert!(result.kept.is_empty(), "{:?}", result.kept);
+    assert!(
+        result.source.ends_with(
+            "  { p with aaaaaaaaaaaa, bbbbbbbbbbbb, cccccccccccc, dddddddddddd, eeeeeeeeeeee, ffffffffffff := 1,\n           gggggggggggg }\n"
+        ),
+        "{}",
+        result.source
+    );
+}
+
+#[test]
+fn paths_format_files_with_different_imports_in_one_process() {
+    use std::process::Command;
+    let dir = std::env::temp_dir().join(format!("leanwisp-imports-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let sources = [
+        (
+            "A.lean",
+            "import Lean\nopen Lean in\ndef a:Name:=`x\n",
+            "import Lean\nopen Lean in\ndef a : Name := `x\n",
+        ),
+        ("B.lean", "def b:Nat:=1\n", "def b : Nat := 1\n"),
+        (
+            "C.lean",
+            "import Std\ndef c:Std.HashMap Nat Nat:={}\n",
+            "import Std\ndef c : Std.HashMap Nat Nat := {}\n",
+        ),
+        (
+            "D.lean",
+            "import Lean\ndef d:Nat:=2\n",
+            "import Lean\ndef d : Nat := 2\n",
+        ),
+    ];
+    for (name, source, _) in sources {
+        std::fs::write(dir.join(name), source).unwrap();
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_leanwisp"))
+        .args([
+            "source",
+            "format-source",
+            "--no-cache",
+            "--jobs",
+            "1",
+            "--write",
+            "--paths",
+        ])
+        .arg(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for (name, _, expected) in sources {
+        assert_eq!(
+            std::fs::read_to_string(dir.join(name)).unwrap(),
+            expected,
+            "{name}"
+        );
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
