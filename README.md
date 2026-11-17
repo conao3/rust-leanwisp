@@ -1,24 +1,52 @@
+<p align="center">
+  <img src="docs/assets/banner.png" alt="Leanwisp: a parser-aware Lean 4 source formatter" width="880">
+</p>
+
+<p align="center"><strong>A parser-aware Lean 4 source formatter with a Rust layout engine</strong></p>
+
+<p align="center">
+  <a href="https://github.com/conao3/rust-leanwisp/actions/workflows/ci.yml"><img src="https://github.com/conao3/rust-leanwisp/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/conao3/rust-leanwisp" alt="License: Apache-2.0"></a>
+  <a href="Cargo.toml"><img src="https://img.shields.io/badge/Rust-edition%202024-orange" alt="Rust edition 2024"></a>
+  <a href="lean-toolchain"><img src="https://img.shields.io/badge/Lean-v4.35.0-blue" alt="Lean v4.35.0"></a>
+  <a href="https://github.com/conao3/rust-leanwisp/stargazers"><img src="https://img.shields.io/github/stars/conao3/rust-leanwisp?style=flat" alt="GitHub stars"></a>
+</p>
+
+<p align="center">
+  <a href="#usage">Usage</a> ·
+  <a href="#layout">Layout</a> ·
+  <a href="#commands-leanwisp-cant-format">Fallbacks</a> ·
+  <a href="#projects-and-configuration">Configuration</a> ·
+  <a href="#speed">Speed</a> ·
+  <a href="#cli">CLI</a> ·
+  <a href="#implementation">Implementation</a> ·
+  <a href="#development">Development</a> ·
+  <a href="docs/mathlib-evaluation.md">Mathlib evaluation</a>
+</p>
+
 # Leanwisp
 
-A Lean 4 source formatter with a Rust layout engine. Leanwisp normalizes spacing,
-indentation and line wrapping into one canonical layout.
-It supports Lean 4.35.0, standard library and Lake dependency imports (Mathlib
-included), and local notation, macro and elab declarations.
+Leanwisp is a Lean 4 source formatter with a Rust layout engine. It normalizes
+spacing, indentation and line wrapping into 1 canonical layout. It supports Lean
+4.35.0, standard library and Lake dependency imports (Mathlib included), and local
+notation, macro and elab declarations.
+
+## Usage
 
 ```sh
 # Format a file, writing only after validation succeeds.
 nix run github:conao3/rust-leanwisp -- source format-source --file Example.lean --write
 # Check without writing (254 means formatting changes are needed).
 nix run . -- source check-source --file Example.lean
-# Format every .lean file under directories, four files at a time.
+# Format every .lean file under directories, 4 files at a time.
 nix run . -- source format-source --paths src tests --write --jobs 4
 # An editor filter: source on stdin, formatted source on stdout.
 nix run . -- --output text source format-source --source file:///dev/stdin
-# Choose the target line width (default 100, supported range 20–300).
+# Choose the target line width (default 100, supported range 20 to 300).
 nix run . -- source format-source --file Example.lean --line-width 80
 ```
 
-For example:
+Input and output:
 
 ```lean
 -- Input
@@ -46,28 +74,28 @@ Where both allow alternatives, Leanwisp picks one:
 - Lines are filled up to `--line-width` (default 100). A function application
   wraps at argument boundaries, an infix operator stays at the end of the line,
   and continuation lines are indented.
-- Declarations are flush-left. A header that does not fit continues on lines
-  indented four columns, with `:` at the end of a line. A body that fits stays on
-  the `:=` line; otherwise it starts on the next line, indented two columns.
-- Attributes stay on the declaration line when the whole declaration fits on one
+- Declarations are flush-left. A header that doesn't fit continues on lines
+  indented 4 columns, with `:` at the end of a line. A body that fits stays on
+  the `:=` line; otherwise it starts on the next line, indented 2 columns.
+- Attributes stay on the declaration line when the whole declaration fits on 1
   line, and go on their own line otherwise.
-- `by`, `do` and `Id.run do` end the line, and their block is indented two
+- `by`, `do` and `Id.run do` end the line, and their block is indented 2
   columns from the start of the declaration or statement. A tactic block that
-  fits stays on one line (`:= by simp`, `first | a | b`, `t <;> u`).
+  fits stays on 1 line (`:= by simp`, `first | a | b`, `t <;> u`).
 - `instance ... where` keeps `where` on the declaration line and puts each field
-  on its own line, indented two columns. Inductive constructors, match arms,
+  on its own line, indented 2 columns. Inductive constructors, match arms,
   bullets and `if`/`else if`/`else` chains use the indentation of the guides.
-- Between commands, zero or one blank line is kept; two or more become one.
-  Blank lines inside a declaration are removed. Files end with one newline.
+- Between commands, 0 or 1 blank line is kept; 2 or more become 1.
+  Blank lines inside a declaration are removed. Files end with 1 newline.
 - Comments, string and character literals, identifiers and operator spellings
   (`>=`, `Prop.exists`) are kept as written.
 
 Every result is parsed again: the syntax tree, comment contents and order must
 match the input, and a second pass must produce the same text.
 
-## Commands Leanwisp cannot format
+## Commands Leanwisp can't format
 
-Validation is per command. When a command cannot be laid out safely, Leanwisp
+Validation is per command. When a command can't be laid out safely, Leanwisp
 first keeps its line breaks from the source and only normalizes spacing and
 indentation within lines (`line-breaks`). If that still fails, or if Lean has no
 formatter for the command's syntax, the command keeps its source text
@@ -82,7 +110,7 @@ Example.lean:12: kept source: Unknown constant `term.pseudo.antiquot`
 and in JSON as `Kept: [{"Line": 12, "Kept": "source", "Reason": "..."}]`.
 `--debug` prints each validation failure that moved a command to a fallback.
 Invalid Lean syntax and missing imports are errors for the whole file, and the
-input is not written.
+input isn't written.
 
 Commands between `-- leanwisp: off` and `-- leanwisp: on` lines keep their source
 text.
@@ -104,11 +132,11 @@ line-width = 100
 
 `--paths` takes files and directories. Directories are searched for `.lean`
 files, skipping names starting with `.` (such as `.lake`) and symlinks. Files are
-formatted in parallel, one per CPU unless `--jobs N` is given.
+formatted in parallel, 1 per CPU unless `--jobs N` is given.
 
 ## Speed
 
-Each `--paths` worker (`--jobs`, default: the number of CPUs) keeps one Lean
+Each `--paths` worker (`--jobs`, default: the number of CPUs) keeps 1 Lean
 process for all of its files. The process reads each imported module's `.olean`
 files once and builds every file's environment from that data with Lean's own
 import rules, so a file sees exactly the modules it imports. A file's
@@ -119,12 +147,11 @@ large group of them is split across workers whenever that shortens the run.
 The process keeps the parse of each command, so a reparse after a fallback only
 parses the text after the first change, and command layouts are reused across
 files when the preceding syntax-changing commands are unchanged. Commands are
-formatted in parallel, and parses whose layout is not needed skip formatting.
+formatted in parallel, and parses whose layout isn't needed skip formatting.
 Comment restoration and the idempotence check align tokens instead of
-reparsing. Results are
-cached in `$XDG_CACHE_HOME/leanwisp` (default `~/.cache/leanwisp`), keyed by the
-source, the line width, the Leanwisp build and the `.olean` files of the imported
-modules, so an unchanged file is not parsed again. `--no-cache` disables the
+reparsing. Results are cached in `$XDG_CACHE_HOME/leanwisp` (default
+`~/.cache/leanwisp`), keyed by the source, the line width, the Leanwisp build and
+the `.olean` files of the imported modules, so an unchanged file isn't parsed again. `--no-cache` disables the
 cache; `--debug` prints parse and render times.
 
 On the 31-file Mathlib sample in [docs/mathlib-evaluation.md](docs/mathlib-evaluation.md)
@@ -140,15 +167,15 @@ machine):
 
 CLI inputs are named parameters. `--source` accepts literal text or `file://`
 contents; `--file` reads a UTF-8 file; `--paths` takes a list. JSON output is the
-default: `Changed`, `Source` and `Kept` for one input, and `Files` with `Path`,
+default: `Changed`, `Source` and `Kept` for 1 input, and `Files` with `Path`,
 `Changed`, `Kept` and `Error` for `--paths`. Global `--output text` emits the
-source (or one `status kept path` line per file for `--paths`), and
+source (or 1 `status kept path` line per file for `--paths`), and
 `--output table` reports change status. Use `leanwisp help`,
 `leanwisp source help`, and subcommand `--help`.
 
 Exit codes: 0 success, 252 CLI syntax errors, 254 input/formatting/check errors
 (including files that need formatting under `check-source`). Only `--write`
-writes, and a file changed during formatting is not overwritten. Symlink inputs
+writes, and a file changed during formatting isn't overwritten. Symlink inputs
 are rejected.
 
 ## Implementation
@@ -159,19 +186,19 @@ with proved properties, generated into Rust with
 [leanfran](https://github.com/conao3/lean-leanfran): which validation failures
 send a command to which fallback, the width and indentation rules, the assignment
 of `--paths` files to workers, the cache key, and the limits and exit statuses of
-the command line. AGENTS.md lists the definitions, their theorems and the measured
-reasons for the code that stays in Rust. A bundled, natively compiled Lean adapter
-(`native/Format.lean`) uses the real parser and
-formatter extensions to produce syntax fingerprints, comment trivia, token
-ranges and a formatting document marked with the source's line-break decisions.
+the command line. AGENTS.md lists the definitions, their theorems and the
+measured reasons for the code that stays in Rust. A bundled, natively compiled
+Lean adapter (`native/Format.lean`) uses the real parser and formatter extensions
+to produce syntax fingerprints, comment trivia, token ranges and a formatting
+document marked with the source's line-break decisions.
 Imported modules are loaded; commands that change the parser or scope are
 elaborated so later commands can use their syntax. Ordinary declarations and
-`#eval` commands are not elaborated.
+`#eval` commands aren't elaborated.
 
 Limitations: syntax extensions need a corresponding Lean formatter, otherwise the
-command keeps its source text. A syntax tree comparison does not prove
+command keeps its source text. A syntax tree comparison doesn't prove
 elaborated theorem equivalence for macros that inspect source positions. Line
-endings outside literals/comments are normalized to LF. Windows is not
+endings outside literals/comments are normalized to LF. Windows isn't
 supported; Linux is tested, and the Nix flake also declares aarch64-darwin.
 
 ## Development
@@ -195,8 +222,8 @@ source.
 Mathlib compatibility is tracked with a read-only, repeatable sample check in
 [docs/mathlib-evaluation.md](docs/mathlib-evaluation.md). It records compilation,
 idempotence, Mathlib's style linter warnings before and after formatting, changed
-lines, kept commands and source hashes. The check also records formatting time; on the
-sample, formatting takes less time than compiling.
+lines, kept commands and source hashes. The check also records formatting time;
+on the sample, formatting takes less time than compiling.
 `tools/check-mathlib.py --help` describes the check inputs.
 
 Apache-2.0. Leanwisp uses the Lean parser/formatter APIs pinned by `flake.lock`.
