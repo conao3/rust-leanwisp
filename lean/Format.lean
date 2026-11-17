@@ -559,7 +559,7 @@ unsafe def formatRequest (cache : IO.Ref (Option (String × Environment))) (memo
     | some (cached, env) =>
       if cached == key then pure env else throw (IO.userError "imports changed")
     | none => do
-      let env ← importModules (level := level) (loadExts := true) imports {} 0
+      let env ← importModules (level := level) (loadExts := true) (leakEnv := true) imports {} 0
       cache.set (some (key, env))
       pure env
   let mut reused : Array Entry := #[]

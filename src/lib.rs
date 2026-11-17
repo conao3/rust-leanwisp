@@ -924,14 +924,15 @@ pub fn imported_modules(source: &str) -> Option<Vec<String>> {
     let mut lines = source.lines();
     while let Some(line) = lines.next() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with("--") || line == "module" || line == "prelude" {
-            continue;
-        }
-        if line.starts_with("/-") {
-            let mut text = line.to_owned();
+        if let Some(rest) = line.strip_prefix("/-") {
+            let mut text = rest.to_owned();
             while !text.contains("-/") {
                 text = lines.next()?.to_owned();
             }
+            continue;
+        }
+        let line = line.split_once("--").map_or(line, |(code, _)| code).trim();
+        if line.is_empty() || line == "module" || line == "prelude" {
             continue;
         }
         let words: Vec<&str> = line.split_whitespace().collect();

@@ -576,3 +576,17 @@ fn paths_reuse_one_process_for_shared_imports() {
     }
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn imported_modules_skip_comments_in_the_header() {
+    assert_eq!(
+        leanwisp::imported_modules(
+            "/- a -- b -/\nmodule -- shake: keep-all\n\npublic import A.B -- note\nimport C\n\ndef x := 1\n"
+        ),
+        Some(vec!["A.B".to_owned(), "C".to_owned()])
+    );
+    assert_eq!(
+        leanwisp::imported_modules("/-\nCopyright\n-/\nmodule\n\npublic import D\n"),
+        Some(vec!["D".to_owned()])
+    );
+}

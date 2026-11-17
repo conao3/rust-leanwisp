@@ -130,8 +130,8 @@ machine):
 
 | | Uncached | Cached |
 |---|---:|---:|
-| Leanwisp | 11.7 s | 0.08 s |
-| [lean-fmt](https://github.com/jcreinhold/lean-fmt) `57c2390` (`format --check`) | 42.8 s | 34.3 s |
+| Leanwisp | 7.4 s | 0.08 s |
+| [lean-fmt](https://github.com/jcreinhold/lean-fmt) `57c2390` (`format --check`) | 33.8 s | 23.6 s |
 
 ## CLI
 
