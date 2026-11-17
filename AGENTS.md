@@ -83,7 +83,7 @@ Lean's own grammar, which the adapter applies when it parses the file. Everythin
 the renderer and the text passes produce is validated on every run: the adapter
 parses the result again, and the verdicts of `src/fallback.rs` accept or reject it.
 
-A rule called per group or per line break costs 8 to 19 ns per call (5,495 groups
+A rule called per group or per line break costs 6 to 19 ns per call (5,495 groups
 and 3,426 line breaks in the file above). `syntaxVerdict` takes 28 µs,
 `commentVerdict` 112 µs, and `key` 90 µs for a 35 KB source (82 µs for the same
 hash in Rust). `schedule` takes 2.6 to 14 ms for 7,000 files.
