@@ -213,7 +213,7 @@ Enable the optional pre-commit hook with `git config core.hooksPath .githooks`.
 `lean/` and `.leanfran/cache/` are generated from the `lean!` blocks under `src/`;
 the dev shell regenerates them on `cargo build`, and `make check` fails when the
 committed files differ. `audit/` runs
-[lean-assay](https://github.com/conao3/lean-assay) on the generated functions:
+[leanassay](https://github.com/conao3/lean-leanassay) on the generated functions:
 `make check` fails when a broken version of one of them satisfies every theorem
 about it.
 Tests include golden layouts for each rule above, narrow and wide widths,

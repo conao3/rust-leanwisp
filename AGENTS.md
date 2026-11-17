@@ -72,7 +72,7 @@ group or line break.
   source and every import with its `.olean` stamp (`fields_injective`).
 
 A theorem counts when it rules out a broken implementation. `audit/` is a Lake
-package that runs [lean-assay](https://github.com/conao3/lean-assay) on the
+package that runs [leanassay](https://github.com/conao3/lean-leanassay) on the
 generated functions Rust calls: `#assay` breaks each function in small ways and
 runs the theorems about it on the broken versions. `lake -d audit build --wfail`
 fails when a function has no theorem, when no broken version of it is refuted,
@@ -156,8 +156,8 @@ artifacts; it does not belong in the default `make check`.
   `LEANFRAN_OFFLINE=1` and uses the committed cache only.
 - `nix develop --command make check`: `nix fmt -- --ci`, Clippy,
   `lake -d lean build --wfail` (the theorems; a warning or a `sorry` fails),
-  `lake -d audit build --wfail` (the audit of the theorems with lean-assay; Lake
-  fetches lean-assay and plausible at the revisions of `audit/lake-manifest.json`),
+  `lake -d audit build --wfail` (the audit of the theorems with leanassay; Lake
+  fetches leanassay and plausible at the revisions of `audit/lake-manifest.json`),
   the comparison of `.leanfran/cache/` and `lean/` with what the build generated, and
   `cargo test` (the comparisons with the Lean definitions, 100,000-element inputs
   to the generated functions on a worker's stack, and the formatter tests of `tests/format.rs`, which run the
