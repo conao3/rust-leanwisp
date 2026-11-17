@@ -496,6 +496,84 @@ pub(crate) unsafe fn l_List_reverseAux___redArg(mut x_1: Obj, mut x_2: Obj) -> O
     unused_unsafe,
     clippy::all
 )]
+pub(crate) unsafe fn l_model_rangesFrom(mut x_1: Obj, mut x_2: Obj, mut x_3: Obj) -> u8 {
+    let mut x_4: u8 = 0;
+    let mut x_5: Obj = rt::lean_box(0);
+    let mut x_6: Obj = rt::lean_box(0);
+    let mut x_7: Obj = rt::lean_box(0);
+    let mut x_8: Obj = rt::lean_box(0);
+    let mut x_9: u8 = 0;
+    let mut x_10: u8 = 0;
+    let mut x_11: u8 = 0;
+    let mut x_12: u8 = 0;
+    let mut __blk: u32 = 0;
+    'body: loop {
+        match __blk {
+            0 => match rt::lean_obj_tag(x_3) {
+                0 => {
+                    x_4 = 1u8;
+                    return x_4;
+                }
+                1 => {
+                    x_5 = rt::lean_ctor_get(x_3, 0);
+                    x_6 = rt::lean_ctor_get(x_3, 1);
+                    x_7 = rt::lean_ctor_get(x_5, 0);
+                    x_8 = rt::lean_ctor_get(x_5, 1);
+                    x_9 = rt::lean_nat_dec_le(x_2, x_7);
+                    match x_9 as u32 {
+                        0 => {
+                            return x_9;
+                        }
+                        1 => {
+                            x_10 = rt::lean_nat_dec_le(x_7, x_8);
+                            match x_10 as u32 {
+                                0 => {
+                                    return x_10;
+                                }
+                                1 => {
+                                    x_11 = rt::lean_nat_dec_le(x_8, x_1);
+                                    match x_11 as u32 {
+                                        0 => {
+                                            return x_11;
+                                        }
+                                        1 => {
+                                            {
+                                                let t_0 = x_1;
+                                                let t_1 = x_8;
+                                                let t_2 = x_6;
+                                                x_1 = t_0;
+                                                x_2 = t_1;
+                                                x_3 = t_2;
+                                            }
+                                            __blk = 0;
+                                            continue 'body;
+                                        }
+                                        _ => rt::lean_internal_panic_unreachable(),
+                                    }
+                                }
+                                _ => rt::lean_internal_panic_unreachable(),
+                            }
+                        }
+                        _ => rt::lean_internal_panic_unreachable(),
+                    }
+                }
+                _ => rt::lean_internal_panic_unreachable(),
+            },
+            _ => rt::lean_internal_panic_unreachable(),
+        }
+    }
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    unused_unsafe,
+    clippy::all
+)]
 pub(crate) unsafe fn l_model_level(mut x_1: Obj, mut x_2: Obj) -> Obj {
     let mut x_3: u8 = 0;
     let mut x_4: Obj = rt::lean_box(0);
@@ -517,6 +595,24 @@ pub(crate) unsafe fn l_model_level(mut x_1: Obj, mut x_2: Obj) -> Obj {
         }
         _ => rt::lean_internal_panic_unreachable(),
     }
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    unused_unsafe,
+    clippy::all
+)]
+pub(crate) unsafe fn l_model_validRanges(mut x_1: Obj, mut x_2: Obj) -> u8 {
+    let mut x_3: Obj = rt::lean_box(0);
+    let mut x_4: u8 = 0;
+    x_3 = rt::lean_unsigned_to_nat(0u32);
+    x_4 = l_model_rangesFrom(x_1, x_3, x_2);
+    return x_4;
 }
 
 #[allow(
@@ -2285,6 +2381,27 @@ pub fn escalate(keep: Keep, arg1: Vec<rt::Nat>) -> Option<Keep> {
     }
 }
 
+#[doc = "Lean: `model.rangesFrom : Nat → Nat → List (Nat × Nat) → Bool` (module `LeanRustGen.Embed.leanwisp.h4431e1275bb49e96.model`)."]
+#[::leanfran::exported("model.rangesFrom")]
+pub fn ranges_from(length: rt::Nat, previous: rt::Nat, arg2: Vec<(rt::Nat, rt::Nat)>) -> bool {
+    unsafe {
+        let __a0: Obj = rt::ToLean::to_lean(length);
+        let __a1: Obj = rt::ToLean::to_lean(previous);
+        let __a2: Obj = rt::list_to_lean(arg2, |v0| {
+            rt::prod_to_lean(
+                v0,
+                |v1| rt::ToLean::to_lean(v1),
+                |v1| rt::ToLean::to_lean(v1),
+            )
+        });
+        let __r: u8 = l_model_rangesFrom(__a0, __a1, __a2);
+        rt::lean_dec(__a0);
+        rt::lean_dec(__a1);
+        rt::lean_dec(__a2);
+        (__r) != 0
+    }
+}
+
 #[doc = "Lean: `model.level : model.Keep → Nat → Nat` (module `LeanRustGen.Embed.leanwisp.h4431e1275bb49e96.model`)."]
 #[::leanfran::exported("model.level")]
 pub fn level(keep: Keep, index: rt::Nat) -> rt::Nat {
@@ -2297,6 +2414,25 @@ pub fn level(keep: Keep, index: rt::Nat) -> rt::Nat {
         let __v = <rt::Nat as rt::FromLean>::from_lean(__r);
         rt::lean_dec(__r);
         __v
+    }
+}
+
+#[doc = "Lean: `model.validRanges : Nat → List (Nat × Nat) → Bool` (module `LeanRustGen.Embed.leanwisp.h4431e1275bb49e96.model`)."]
+#[::leanfran::exported("model.validRanges")]
+pub fn valid_ranges(length: rt::Nat, ranges: Vec<(rt::Nat, rt::Nat)>) -> bool {
+    unsafe {
+        let __a0: Obj = rt::ToLean::to_lean(length);
+        let __a1: Obj = rt::list_to_lean(ranges, |v0| {
+            rt::prod_to_lean(
+                v0,
+                |v1| rt::ToLean::to_lean(v1),
+                |v1| rt::ToLean::to_lean(v1),
+            )
+        });
+        let __r: u8 = l_model_validRanges(__a0, __a1);
+        rt::lean_dec(__a0);
+        rt::lean_dec(__a1);
+        (__r) != 0
     }
 }
 

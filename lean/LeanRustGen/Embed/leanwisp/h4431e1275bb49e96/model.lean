@@ -91,6 +91,13 @@ def parseBlame (starts : Option (List Nat)) (offset : Option Nat) : Blame :=
   | some starts, some offset => .commands [commandAt starts offset]
   | _, _ => .file
 
+def rangesFrom (length previous : Nat) : List (Nat × Nat) → Bool
+  | [] => true
+  | range :: rest =>
+    previous ≤ range.1 && range.1 ≤ range.2 && range.2 ≤ length && rangesFrom length range.2 rest
+
+def validRanges (length : Nat) (ranges : List (Nat × Nat)) : Bool := rangesFrom length 0 ranges
+
 theorem escalateOne_none_iff (keep : Keep) (index : Nat) :
     escalateOne keep index = none ↔ mode keep index = .source := by
   unfold escalateOne
@@ -359,5 +366,39 @@ theorem commandAt_last (starts : List Nat) (offset i : Nat) (h : i < starts.leng
   have := commandAtFrom_last offset starts 0 0 i h hle
   unfold commandAt
   omega
+
+theorem rangesFrom_bounds (length : Nat) (ranges : List (Nat × Nat)) :
+    ∀ previous, rangesFrom length previous ranges = true →
+      ∀ range ∈ ranges, previous ≤ range.1 ∧ range.1 ≤ range.2 ∧ range.2 ≤ length := by
+  induction ranges with
+  | nil => intro previous _ range h; simp at h
+  | cons first rest ih =>
+    intro previous h range hmem
+    simp only [rangesFrom, Bool.and_eq_true, decide_eq_true_eq] at h
+    rcases List.mem_cons.mp hmem with hmem | hmem
+    · subst hmem
+      exact ⟨h.1.1.1, h.1.1.2, h.1.2⟩
+    · have := ih first.2 h.2 range hmem
+      omega
+
+theorem rangesFrom_sorted (length : Nat) (ranges : List (Nat × Nat)) :
+    ∀ previous, rangesFrom length previous ranges = true →
+      ranges.Pairwise fun earlier later => earlier.2 ≤ later.1 := by
+  induction ranges with
+  | nil => intro previous _; exact List.Pairwise.nil
+  | cons first rest ih =>
+    intro previous h
+    simp only [rangesFrom, Bool.and_eq_true, decide_eq_true_eq] at h
+    exact List.Pairwise.cons
+      (fun later hmem => (rangesFrom_bounds length rest first.2 h.2 later hmem).1)
+      (ih first.2 h.2)
+
+/-- Accepted token ranges lie inside the source, in order and without overlap. -/
+theorem validRanges_sound (length : Nat) (ranges : List (Nat × Nat))
+    (h : validRanges length ranges = true) :
+    (∀ range ∈ ranges, range.1 ≤ range.2 ∧ range.2 ≤ length) ∧
+      ranges.Pairwise fun earlier later => earlier.2 ≤ later.1 :=
+  ⟨fun range hmem => (rangesFrom_bounds length ranges 0 h range hmem).2,
+    rangesFrom_sorted length ranges 0 h⟩
 
 end model

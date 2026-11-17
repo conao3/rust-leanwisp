@@ -9,6 +9,31 @@ structure Outcome where
   changed : Bool
   deriving DecidableEq, Repr
 
+inductive Entry where
+  | skip | descend | format
+  deriving DecidableEq, Repr
+
+inductive Location where
+  | stdin
+  | file (path : String)
+  | literal (text : String)
+  deriving DecidableEq, Repr
+
+def usageStatus : Nat := 252
+
+def failureStatus : Nat := 254
+
+def entry (name : String) (symlink directory : Bool) : Entry :=
+  if name.startsWith "." || symlink then .skip
+  else if directory then .descend
+  else if name.endsWith ".lean" then .format
+  else .skip
+
+def locate (value : String) : Location :=
+  if value = "file:///dev/stdin" then .stdin
+  else if value.startsWith "file://" then .file (value.drop 7).toString
+  else .literal value
+
 def minWidth : Nat := 20
 
 def maxWidth : Nat := 300
@@ -36,7 +61,7 @@ def status (outcome : Outcome) (write : Bool) : Status :=
 def pending (write : Bool) (outcome : Outcome) : Bool := outcome.changed && !write
 
 def exitCode (check write : Bool) (outcomes : List Outcome) : Nat :=
-  if outcomes.any (·.failed) || (check && outcomes.any (pending write)) then 254 else 0
+  if outcomes.any (·.failed) || (check && outcomes.any (pending write)) then failureStatus else 0
 
 theorem default_width_is_valid : validWidth (lineWidth none none) = true := by decide
 
@@ -58,7 +83,7 @@ theorem check_never_writes (write literal : Bool) (h : writable write true liter
   cases write <;> simp_all [writable]
 
 theorem exitCode_cases (check write : Bool) (outcomes : List Outcome) :
-    exitCode check write outcomes = 0 ∨ exitCode check write outcomes = 254 := by
+    exitCode check write outcomes = 0 ∨ exitCode check write outcomes = failureStatus := by
   unfold exitCode
   split <;> simp
 
@@ -70,11 +95,11 @@ theorem check_passes_iff (outcomes : List Outcome) :
   · intro h outcome hmem
     by_cases hf : outcome.failed = true
     · have hany : outcomes.any (·.failed) = true := List.any_eq_true.mpr ⟨outcome, hmem, hf⟩
-      simp [hany] at h
+      simp [hany, failureStatus] at h
     · by_cases hc : outcome.changed = true
       · have hany : outcomes.any (pending false) = true :=
           List.any_eq_true.mpr ⟨outcome, hmem, by simp [pending, hc]⟩
-        simp [hany] at h
+        simp [hany, failureStatus] at h
       · exact ⟨by simpa using hf, by simpa using hc⟩
   · intro h
     have hf : outcomes.any (·.failed) = false := by
@@ -93,7 +118,7 @@ theorem format_passes_iff (write : Bool) (outcomes : List Outcome) :
   constructor
   · intro h outcome hmem
     by_cases hf : outcome.failed = true
-    · simp [List.any_eq_true.mpr ⟨outcome, hmem, hf⟩] at h
+    · simp [List.any_eq_true.mpr ⟨outcome, hmem, hf⟩, failureStatus] at h
     · simpa using hf
   · intro h
     have hf : outcomes.any (·.failed) = false := by
@@ -116,5 +141,31 @@ theorem status_formatted_iff (outcome : Outcome) (write : Bool) :
       outcome.failed = false ∧ write = true ∧ outcome.changed = true := by
   unfold status writes
   cases outcome.failed <;> cases write <;> cases outcome.changed <;> simp
+
+theorem hidden_and_symlinks_are_skipped (name : String) (symlink directory : Bool)
+    (h : name.startsWith "." = true ∨ symlink = true) : entry name symlink directory = .skip := by
+  unfold entry
+  rcases h with h | h <;> simp [h]
+
+theorem formatted_entry (name : String) (symlink directory : Bool)
+    (h : entry name symlink directory = .format) :
+    name.endsWith ".lean" = true ∧ name.startsWith "." = false ∧ symlink = false ∧
+      directory = false := by
+  unfold entry at h
+  split at h
+  · cases h
+  · split at h
+    · cases h
+    · split at h
+      · simp_all
+      · cases h
+
+theorem literal_source (value text : String) (h : locate value = .literal text) : text = value := by
+  unfold locate at h
+  split at h
+  · cases h
+  · split at h
+    · cases h
+    · cases h; rfl
 
 end model

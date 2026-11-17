@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
-use leanwisp::policy::{self, Outcome, Status};
+use leanwisp::policy::{self, Entry, Location, Outcome, Status};
 use serde::Deserialize;
 use serde_json::json;
 use std::{
@@ -256,13 +256,10 @@ fn lean_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
             let path = entry.path();
             let name = entry.file_name();
             let kind = entry.file_type().map_err(|e| e.to_string())?;
-            if name.to_string_lossy().starts_with('.') || kind.is_symlink() {
-                continue;
-            }
-            if kind.is_dir() {
-                walk(&path, out)?;
-            } else if path.extension().is_some_and(|e| e == "lean") {
-                out.push(path);
+            match policy::entry(name.to_string_lossy(), kind.is_symlink(), kind.is_dir()) {
+                Entry::Skip => {}
+                Entry::Descend => walk(&path, out)?,
+                Entry::Format => out.push(path),
             }
         }
         Ok(())
@@ -415,16 +412,16 @@ fn run(cli: Cli) -> Result<i32, String> {
         format_file(&opts, path, &mut leanwisp::Pool::default())
     } else {
         let value = opts.input.source.clone().unwrap_or_default();
-        let source = if value == "file:///dev/stdin" {
-            let mut data = String::new();
-            std::io::stdin()
-                .read_to_string(&mut data)
-                .map_err(|e| e.to_string())?;
-            data
-        } else if let Some(path) = value.strip_prefix("file://") {
-            std::fs::read_to_string(path).map_err(|e| e.to_string())?
-        } else {
-            value
+        let source = match policy::locate(&value) {
+            Location::Stdin => {
+                let mut data = String::new();
+                std::io::stdin()
+                    .read_to_string(&mut data)
+                    .map_err(|e| e.to_string())?;
+                data
+            }
+            Location::File { path } => std::fs::read_to_string(path).map_err(|e| e.to_string())?,
+            Location::Literal { text } => text,
         };
         let formatted = format_text(&opts, &source, None, &mut leanwisp::Pool::default())?;
         Report {
@@ -458,13 +455,13 @@ fn main() {
             clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
         );
         let _ = e.print();
-        std::process::exit(if success { 0 } else { 252 });
+        std::process::exit(if success { 0 } else { policy::usage_status() });
     });
     match run(cli) {
         Ok(code) => std::process::exit(code),
         Err(error) => {
             eprintln!("{error}");
-            std::process::exit(254);
+            std::process::exit(policy::failure_status());
         }
     }
 }

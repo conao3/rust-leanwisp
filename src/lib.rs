@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod fallback;
+pub mod layout;
 pub mod policy;
 pub mod schedule;
 
@@ -146,22 +147,30 @@ impl Adapter {
         }
         let mut parsed: Parsed = serde_json::from_value(response)
             .map_err(|e| format!("invalid parser response: {e}"))?;
-        let mut end = 0;
-        for [start, stop] in &parsed.tokens {
-            if *start < end
-                || *stop < *start
-                || *stop > source.len()
-                || !source.is_char_boundary(*start)
-                || !source.is_char_boundary(*stop)
-            {
-                return Err("unsupported overlapping or invalid syntax token ranges".into());
-            }
-            end = *stop;
+        if !valid_ranges(source.len(), &parsed.tokens)
+            || parsed
+                .tokens
+                .iter()
+                .flatten()
+                .any(|&offset| !source.is_char_boundary(offset))
+        {
+            return Err("unsupported overlapping or invalid syntax token ranges".into());
         }
         attach_block_introducers(&mut parsed.document);
         trace(|| format!("parsed {} bytes in {:.2?}", source.len(), started.elapsed()));
         Ok(parsed)
     }
+}
+
+fn valid_ranges(length: usize, ranges: &[[usize; 2]]) -> bool {
+    let mut end = 0;
+    for [start, stop] in ranges {
+        if *start < end || *stop < *start || *stop > length {
+            return false;
+        }
+        end = *stop;
+    }
+    true
 }
 
 impl Drop for Adapter {
@@ -328,12 +337,12 @@ fn regroup<'a>(mut g: Group<'a>, groups: &mut Vec<Group<'a>>, col: usize, width:
     g.flat = Some(!g.fill);
     let w = width.saturating_sub(col);
     let r = measure_groups(std::slice::from_ref(&g), col, w);
-    let total = if r.line || r.size > w {
-        r.size
+    let following = if layout::needs_context(r.line, r.size, w) {
+        measure_groups(groups, col, w - r.size).size
     } else {
-        r.size + measure_groups(groups, col, w - r.size).size
+        0
     };
-    g.flat = Some(!r.hard && total <= w);
+    g.flat = Some(layout::fits(r.hard, r.size + following, w));
     groups.push(g);
 }
 /// Render Lean's all-or-none and fill groups, measuring their remaining context.
@@ -469,7 +478,7 @@ fn render_marked(doc: &Value, width: usize) -> (String, Vec<usize>) {
                         .nth(1)
                         .map_or(0, |l| l.len() - l.trim_start_matches(' ').len());
                     pending = if tag(d) == "softblock" {
-                        (i.indent.max(0) as usize).min(base + 2)
+                        layout::softblock_indent(i.indent, base)
                     } else {
                         i.indent.max(0) as usize
                     };
@@ -492,11 +501,9 @@ fn render_marked(doc: &Value, width: usize) -> (String, Vec<usize>) {
                 col = 0;
                 let delta = d[1].as_i64().unwrap_or(0);
                 let desired = if tag(d) == "block" {
-                    (base + 2)
-                        .min(i.indent.max(0) as usize)
-                        .min((base as i64 + delta).max(0) as usize)
+                    layout::block_indent(i.indent, base, delta)
                 } else {
-                    (base as i64 + d[1].as_i64().unwrap_or(0)).max(0) as usize
+                    layout::break_indent(base, delta)
                 };
                 explicit = true;
                 pending = desired;
@@ -510,19 +517,22 @@ fn render_marked(doc: &Value, width: usize) -> (String, Vec<usize>) {
                 }
             }
             "align" if g.flat != Some(true) || d[1].as_bool().unwrap_or(false) => {
-                let indent = i.indent.max(0) as usize;
-                if col == 0 {
-                    if !explicit {
-                        pending = i.indent.max(0) as usize;
+                match layout::align_action(col, i.indent) {
+                    layout::Align::Indent => {
+                        if !explicit {
+                            pending = i.indent.max(0) as usize;
+                        }
                     }
-                } else if col < indent {
-                    out.extend(std::iter::repeat_n(' ', indent - col));
-                    col = indent;
-                } else {
-                    push_newline(&mut out);
-                    col = 0;
-                    pending = i.indent.max(0) as usize;
-                    explicit = false;
+                    layout::Align::Pad(spaces) => {
+                        out.extend(std::iter::repeat_n(' ', spaces));
+                        col += spaces;
+                    }
+                    layout::Align::Wrap => {
+                        push_newline(&mut out);
+                        col = 0;
+                        pending = i.indent.max(0) as usize;
+                        explicit = false;
+                    }
                 }
             }
             _ => {}
@@ -1044,6 +1054,192 @@ fn format_with(adapter: &mut Adapter, source: &str, width: usize) -> Result<Form
                 keep = next;
             }
             Err(Failure::Fatal(message)) => return Err(message),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn agrees(doc: &Value, flat: bool, margin: i64, width: usize) {
+        let rust = measure(doc, flat, margin, width);
+        let lean = layout::model::measure(
+            flat,
+            leanfran::Int::from(margin),
+            layout::doc_of(doc),
+            nat(width),
+        );
+        assert_eq!(
+            (rust.line, rust.hard, rust.end, rust.size),
+            (lean.line, lean.hard, lean.finish, index(lean.size)),
+            "flat {flat}, margin {margin}, width {width}: {doc}"
+        );
+    }
+
+    fn random_doc(next: &mut impl FnMut(u64) -> u64, depth: u64) -> Value {
+        let texts = [
+            "",
+            "a",
+            "abc",
+            "héllo wörld",
+            "x\ny",
+            "\n",
+            "  ",
+            "long text here\n  ",
+        ];
+        match next(if depth == 0 { 10 } else { 16 }) {
+            0 => serde_json::json!(["nil"]),
+            1..=3 => serde_json::json!(["text", texts[next(8) as usize]]),
+            4 => serde_json::json!(["line"]),
+            5 => serde_json::json!(["softblock"]),
+            6 => serde_json::json!(["attrline"]),
+            7 => {
+                let kind = ["break", "block"][next(2) as usize];
+                serde_json::json!([kind, next(9) as i64 - 4])
+            }
+            8 => serde_json::json!(["align", next(2) == 0]),
+            9 => {
+                let kind = ["command", "fieldcolumn", "unknown"][next(3) as usize];
+                serde_json::json!([kind])
+            }
+            10..=12 => {
+                serde_json::json!([
+                    "append",
+                    random_doc(next, depth - 1),
+                    random_doc(next, depth - 1)
+                ])
+            }
+            13 => serde_json::json!(["nest", next(9) as i64 - 2, random_doc(next, depth - 1)]),
+            _ => serde_json::json!(["group", random_doc(next, depth - 1), next(2) == 0]),
+        }
+    }
+
+    fn subtrees<'a>(doc: &'a Value, result: &mut Vec<&'a Value>) {
+        result.push(doc);
+        match tag(doc) {
+            "append" => {
+                subtrees(&doc[1], result);
+                subtrees(&doc[2], result);
+            }
+            "nest" => subtrees(&doc[2], result),
+            "group" => subtrees(&doc[1], result),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn rules_handle_large_inputs_on_a_worker_stack() {
+        std::thread::spawn(|| {
+            let trees: Vec<String> = (0..100_000).map(|i| i.to_string()).collect();
+            let mut other = trees.clone();
+            other[50_000] = "x".into();
+            other[99_999] = "y".into();
+            assert!(fallback::syntax_verdict(&trees, &trees, 5, 5).is_none());
+            assert!(matches!(
+                fallback::syntax_verdict(&trees, &other, 5, 5),
+                Some(Blame::Commands(found)) if found == [49_999, 99_998]
+            ));
+            let ranges: Vec<[usize; 2]> = (0..100_000).map(|i| [2 * i, 2 * i + 1]).collect();
+            assert!(fallback::valid_ranges(200_000, &ranges));
+            assert!(!fallback::valid_ranges(199_998, &ranges));
+            assert!(valid_ranges(200_000, &ranges));
+            let starts: Vec<usize> = (0..100_000).map(|i| 10 * i).collect();
+            assert!(matches!(
+                fallback::stability_verdict(&starts, Some(123_456)),
+                Some(Blame::Commands(found)) if found == [12_345]
+            ));
+            let comments: Vec<Vec<String>> =
+                (0..100_000).map(|i| vec![format!("-- {i}")]).collect();
+            let mut changed = comments.clone();
+            changed[70_000].clear();
+            assert!(matches!(
+                fallback::comment_verdict(comments.concat(), changed.concat(), comments, changed),
+                Some(Blame::Commands(found)) if found == [70_000]
+            ));
+            let commands: Vec<usize> = (0..3_000).collect();
+            let once = fallback::escalate(&Keep::default(), &commands).unwrap();
+            let twice = fallback::escalate(&once, &commands).unwrap();
+            assert_eq!((twice.lines.len(), twice.verbatim.len()), (3_000, 3_000));
+            assert!(fallback::escalate(&twice, &[1_500]).is_none());
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn token_ranges_match_the_lean_definition() {
+        let mut state = 0xd1342543de82ef95u64;
+        let mut next = |bound: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % bound) as usize
+        };
+        let mut accepted = 0;
+        for _ in 0..4000 {
+            let mut position = 0;
+            let ranges: Vec<[usize; 2]> = (0..next(6))
+                .map(|_| {
+                    let start = (position + next(4)).saturating_sub(next(8) / 7);
+                    let stop = (start + next(5)).saturating_sub(next(8) / 7);
+                    position = stop;
+                    [start, stop]
+                })
+                .collect();
+            let length = position.saturating_sub(next(8) / 7) + next(3);
+            let valid = valid_ranges(length, &ranges);
+            assert_eq!(
+                valid,
+                fallback::valid_ranges(length, &ranges),
+                "{length}: {ranges:?}"
+            );
+            accepted += usize::from(valid);
+        }
+        assert!((500..3500).contains(&accepted), "{accepted}");
+    }
+
+    #[test]
+    fn measure_matches_the_lean_definition_on_random_documents() {
+        let mut state = 0x9e3779b97f4a7c15u64;
+        let mut next = |bound: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % bound
+        };
+        for _ in 0..1500 {
+            let doc = random_doc(&mut next, 6);
+            for flat in [false, true] {
+                for margin in [-3, 0, 5, 40, i64::MAX / 4] {
+                    for width in [0, 1, 7, 30, 100] {
+                        agrees(&doc, flat, margin, width);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn measure_matches_the_lean_definition_on_formatter_documents() {
+        let mut adapter = Adapter::start(None).unwrap();
+        for source in [
+            include_str!("../tests/fixtures/Basics.lean"),
+            include_str!("../tests/fixtures/PracticeBasics.lean"),
+            include_str!("../tests/fixtures/PracticeProofs.lean"),
+        ] {
+            let parsed = adapter.parse(source, &Keep::default(), true).unwrap();
+            let mut nodes = Vec::new();
+            subtrees(&parsed.document, &mut nodes);
+            let step = (nodes.len() / 300).max(1);
+            for doc in nodes.into_iter().step_by(step) {
+                for flat in [false, true] {
+                    for (margin, width) in [(0, 0), (0, 40), (20, 40), (0, 100), (i64::MAX / 4, 99)]
+                    {
+                        agrees(doc, flat, margin, width);
+                    }
+                }
+            }
         }
     }
 }

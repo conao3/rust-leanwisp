@@ -154,8 +154,14 @@ are rejected.
 ## Implementation
 
 The Rust implementation owns command parsing, project discovery, document
-rendering, width and indentation policies, validation, fallbacks and file
-handling. A bundled, natively compiled Lean adapter uses the real parser and
+rendering and file handling. The rules that decide a result are Lean definitions
+with proved properties, generated into Rust with
+[leanfran](https://github.com/conao3/lean-leanfran): which validation failures
+send a command to which fallback, the width and indentation rules, the assignment
+of `--paths` files to workers, the cache key, and the limits and exit statuses of
+the command line. AGENTS.md lists the definitions, their theorems and the measured
+reasons for the code that stays in Rust. A bundled, natively compiled Lean adapter
+(`native/Format.lean`) uses the real parser and
 formatter extensions to produce syntax fingerprints, comment trivia, token
 ranges and a formatting document marked with the source's line-break decisions.
 Imported modules are loaded; commands that change the parser or scope are
@@ -171,12 +177,15 @@ supported; Linux is tested, and the Nix flake also declares aarch64-darwin.
 ## Development
 
 ```sh
-nix develop --command make check  # rustfmt/nixfmt/ruff, clippy, all tests
+nix develop --command make check  # rustfmt/nixfmt/ruff, clippy, Lean theorems, generated code, all tests
 nix build                       # packaged application and integration tests
 nix run . -- --version
 ```
 
 Enable the optional pre-commit hook with `git config core.hooksPath .githooks`.
+`lean/` and `.leanfran/cache/` are generated from the `lean!` blocks under `src/`;
+the dev shell regenerates them on `cargo build`, and `make check` fails when the
+committed files differ.
 Tests include golden layouts for each rule above, narrow and wide widths,
 literal and comment preservation, per-command fallbacks and opt-out markers,
 150 declarations, Lake-local notation, CLI write/check/`--paths` behavior,

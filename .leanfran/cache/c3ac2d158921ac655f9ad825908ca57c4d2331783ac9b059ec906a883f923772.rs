@@ -11,6 +11,31 @@ use rt::Obj;
     unused_assignments,
     unused_variables,
     unreachable_code,
+    clippy::all
+)]
+unsafe fn l_model_usageStatus_init() -> Obj {
+    let mut x_1: Obj = rt::lean_box(0);
+    x_1 = rt::lean_unsigned_to_nat(252u32);
+    return x_1;
+}
+#[allow(dead_code, non_snake_case, clippy::all)]
+pub(crate) unsafe fn l_model_usageStatus() -> Obj {
+    thread_local! { static CELL: core::cell::OnceCell<Obj> = const { core::cell::OnceCell::new() }; }
+    if let Some(v) = CELL.with(|c| c.get().copied()) {
+        return v;
+    }
+    let v = l_model_usageStatus_init();
+    rt::lean_mark_persistent(v);
+    CELL.with(|c| *c.get_or_init(|| v))
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
     unused_unsafe,
     clippy::all
 )]
@@ -40,6 +65,31 @@ pub(crate) unsafe fn l_model_writable(mut x_1: u8, mut x_2: u8, mut x_3: u8) -> 
         },
         _ => rt::lean_internal_panic_unreachable(),
     }
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    clippy::all
+)]
+unsafe fn l_model_failureStatus_init() -> Obj {
+    let mut x_1: Obj = rt::lean_box(0);
+    x_1 = rt::lean_unsigned_to_nat(254u32);
+    return x_1;
+}
+#[allow(dead_code, non_snake_case, clippy::all)]
+pub(crate) unsafe fn l_model_failureStatus() -> Obj {
+    thread_local! { static CELL: core::cell::OnceCell<Obj> = const { core::cell::OnceCell::new() }; }
+    if let Some(v) = CELL.with(|c| c.get().copied()) {
+        return v;
+    }
+    let v = l_model_failureStatus_init();
+    rt::lean_mark_persistent(v);
+    CELL.with(|c| *c.get_or_init(|| v))
 }
 
 #[allow(
@@ -279,6 +329,297 @@ pub(crate) unsafe fn l_model_pending(mut x_1: u8, mut x_2: Obj) -> u8 {
         },
         _ => rt::lean_internal_panic_unreachable(),
     }
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    unused_unsafe,
+    clippy::all
+)]
+pub(crate) unsafe fn l_model_locate(mut x_1: Obj) -> Obj {
+    let mut x_2: Obj = rt::lean_box(0);
+    let mut x_3: u8 = 0;
+    let mut x_4: Obj = rt::lean_box(0);
+    let mut x_5: Obj = rt::lean_box(0);
+    let mut x_6: Obj = rt::lean_box(0);
+    let mut x_7: u8 = 0;
+    let mut x_8: Obj = rt::lean_box(0);
+    let mut x_9: Obj = rt::lean_box(0);
+    let mut x_10: u8 = 0;
+    let mut x_11: Obj = rt::lean_box(0);
+    let mut x_12: Obj = rt::lean_box(0);
+    let mut x_13: Obj = rt::lean_box(0);
+    let mut x_14: Obj = rt::lean_box(0);
+    let mut x_15: Obj = rt::lean_box(0);
+    let mut x_16: Obj = rt::lean_box(0);
+    let mut x_17: Obj = rt::lean_box(0);
+    let mut x_18: Obj = rt::lean_box(0);
+    x_2 = l_model_locate___closed__0();
+    x_3 = rt::lean_string_dec_eq(x_1, x_2);
+    match x_3 as u32 {
+        0 => {
+            x_4 = l_model_locate___closed__1();
+            x_5 = rt::lean_string_utf8_byte_size(x_1);
+            x_6 = l_model_locate___closed__2();
+            x_7 = rt::lean_nat_dec_le(x_6, x_5);
+            match x_7 as u32 {
+                0 => {
+                    x_8 = rt::lean_alloc_ctor(2, 1, 0 * core::mem::size_of::<usize>() as u32 + 0);
+                    rt::lean_ctor_set(x_8, 0, x_1);
+                    return x_8;
+                }
+                1 => {
+                    x_9 = rt::lean_unsigned_to_nat(0u32);
+                    x_10 = rt::lean_string_memcmp(x_1, x_4, x_9, x_9, x_6);
+                    match x_10 as u32 {
+                        0 => {
+                            x_11 = rt::lean_alloc_ctor(
+                                2,
+                                1,
+                                0 * core::mem::size_of::<usize>() as u32 + 0,
+                            );
+                            rt::lean_ctor_set(x_11, 0, x_1);
+                            return x_11;
+                        }
+                        1 => {
+                            x_12 = rt::lean_unsigned_to_nat(7u32);
+                            rt::lean_inc_ref(x_1);
+                            x_13 = rt::lean_alloc_ctor(
+                                0,
+                                3,
+                                0 * core::mem::size_of::<usize>() as u32 + 0,
+                            );
+                            rt::lean_ctor_set(x_13, 0, x_1);
+                            rt::lean_ctor_set(x_13, 1, x_9);
+                            rt::lean_ctor_set(x_13, 2, x_5);
+                            x_14 = l_String_Slice_Pos_nextn(x_13, x_9, x_12);
+                            rt::lean_dec_ref(x_13);
+                            x_15 = rt::lean_alloc_ctor(
+                                0,
+                                3,
+                                0 * core::mem::size_of::<usize>() as u32 + 0,
+                            );
+                            rt::lean_ctor_set(x_15, 0, x_1);
+                            rt::lean_ctor_set(x_15, 1, x_14);
+                            rt::lean_ctor_set(x_15, 2, x_5);
+                            x_16 = l_String_Slice_toString(x_15);
+                            rt::lean_dec_ref(x_15);
+                            x_17 = rt::lean_alloc_ctor(
+                                1,
+                                1,
+                                0 * core::mem::size_of::<usize>() as u32 + 0,
+                            );
+                            rt::lean_ctor_set(x_17, 0, x_16);
+                            return x_17;
+                        }
+                        _ => rt::lean_internal_panic_unreachable(),
+                    }
+                }
+                _ => rt::lean_internal_panic_unreachable(),
+            }
+        }
+        1 => {
+            rt::lean_dec_ref(x_1);
+            x_18 = rt::lean_box(0);
+            return x_18;
+        }
+        _ => rt::lean_internal_panic_unreachable(),
+    }
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    clippy::all
+)]
+unsafe fn l_model_locate___closed__0_init() -> Obj {
+    let mut x_1: Obj = rt::lean_box(0);
+    x_1 = rt::lean_mk_string_unchecked("file:///dev/stdin", 17, 17);
+    return x_1;
+}
+#[allow(dead_code, non_snake_case, clippy::all)]
+pub(crate) unsafe fn l_model_locate___closed__0() -> Obj {
+    thread_local! { static CELL: core::cell::OnceCell<Obj> = const { core::cell::OnceCell::new() }; }
+    if let Some(v) = CELL.with(|c| c.get().copied()) {
+        return v;
+    }
+    let v = l_model_locate___closed__0_init();
+    rt::lean_mark_persistent(v);
+    CELL.with(|c| *c.get_or_init(|| v))
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    clippy::all
+)]
+unsafe fn l_model_locate___closed__1_init() -> Obj {
+    let mut x_1: Obj = rt::lean_box(0);
+    x_1 = rt::lean_mk_string_unchecked("file://", 7, 7);
+    return x_1;
+}
+#[allow(dead_code, non_snake_case, clippy::all)]
+pub(crate) unsafe fn l_model_locate___closed__1() -> Obj {
+    thread_local! { static CELL: core::cell::OnceCell<Obj> = const { core::cell::OnceCell::new() }; }
+    if let Some(v) = CELL.with(|c| c.get().copied()) {
+        return v;
+    }
+    let v = l_model_locate___closed__1_init();
+    rt::lean_mark_persistent(v);
+    CELL.with(|c| *c.get_or_init(|| v))
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    clippy::all
+)]
+unsafe fn l_model_locate___closed__2_init() -> Obj {
+    let mut x_1: Obj = rt::lean_box(0);
+    let mut x_2: Obj = rt::lean_box(0);
+    x_1 = l_model_locate___closed__1();
+    x_2 = rt::lean_string_utf8_byte_size(x_1);
+    return x_2;
+}
+#[allow(dead_code, non_snake_case, clippy::all)]
+pub(crate) unsafe fn l_model_locate___closed__2() -> Obj {
+    thread_local! { static CELL: core::cell::OnceCell<Obj> = const { core::cell::OnceCell::new() }; }
+    if let Some(v) = CELL.with(|c| c.get().copied()) {
+        return v;
+    }
+    let v = l_model_locate___closed__2_init();
+    rt::lean_mark_persistent(v);
+    CELL.with(|c| *c.get_or_init(|| v))
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    unused_unsafe,
+    clippy::all
+)]
+pub(crate) unsafe fn l_String_Slice_Pos_nextn(mut x_1: Obj, mut x_2: Obj, mut x_3: Obj) -> Obj {
+    let mut x_4: Obj = rt::lean_box(0);
+    let mut x_5: u8 = 0;
+    let mut x_6: Obj = rt::lean_box(0);
+    let mut x_7: Obj = rt::lean_box(0);
+    let mut x_8: Obj = rt::lean_box(0);
+    let mut x_9: Obj = rt::lean_box(0);
+    let mut x_10: Obj = rt::lean_box(0);
+    let mut x_12: Obj = rt::lean_box(0);
+    let mut x_13: Obj = rt::lean_box(0);
+    let mut x_14: Obj = rt::lean_box(0);
+    let mut x_15: Obj = rt::lean_box(0);
+    let mut x_16: Obj = rt::lean_box(0);
+    let mut x_17: u8 = 0;
+    let mut __blk: u32 = 0;
+    'body: loop {
+        match __blk {
+            0 => {
+                x_4 = rt::lean_unsigned_to_nat(0u32);
+                x_5 = rt::lean_nat_dec_eq(x_3, x_4);
+                match x_5 as u32 {
+                    1 => {
+                        rt::lean_dec(x_3);
+                        return x_2;
+                    }
+                    0 => {
+                        x_6 = rt::lean_ctor_get(x_1, 0);
+                        x_7 = rt::lean_ctor_get(x_1, 1);
+                        x_8 = rt::lean_ctor_get(x_1, 2);
+                        x_9 = rt::lean_unsigned_to_nat(1u32);
+                        x_10 = rt::lean_nat_sub(x_3, x_9);
+                        rt::lean_dec(x_3);
+                        x_16 = rt::lean_nat_sub(x_8, x_7);
+                        x_17 = rt::lean_nat_dec_eq(x_2, x_16);
+                        rt::lean_dec(x_16);
+                        match x_17 as u32 {
+                            0 => {
+                                {}
+                                __blk = 1;
+                                continue 'body;
+                            }
+                            1 => match x_5 as u32 {
+                                0 => {
+                                    rt::lean_dec(x_10);
+                                    return x_2;
+                                }
+                                1 => {
+                                    {}
+                                    __blk = 1;
+                                    continue 'body;
+                                }
+                                _ => rt::lean_internal_panic_unreachable(),
+                            },
+                            _ => rt::lean_internal_panic_unreachable(),
+                        }
+                    }
+                    _ => rt::lean_internal_panic_unreachable(),
+                }
+            }
+            1 => {
+                x_12 = rt::lean_nat_add(x_7, x_2);
+                rt::lean_dec(x_2);
+                x_13 = rt::lean_string_utf8_next_fast(x_6, x_12);
+                rt::lean_dec(x_12);
+                x_14 = rt::lean_nat_sub(x_13, x_7);
+                {
+                    let t_0 = x_1;
+                    let t_1 = x_14;
+                    let t_2 = x_10;
+                    x_1 = t_0;
+                    x_2 = t_1;
+                    x_3 = t_2;
+                }
+                __blk = 0;
+                continue 'body;
+            }
+            _ => rt::lean_internal_panic_unreachable(),
+        }
+    }
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    unused_unsafe,
+    clippy::all
+)]
+pub(crate) unsafe fn l_String_Slice_toString(mut x_1: Obj) -> Obj {
+    let mut x_2: Obj = rt::lean_box(0);
+    let mut x_3: Obj = rt::lean_box(0);
+    let mut x_4: Obj = rt::lean_box(0);
+    let mut x_5: Obj = rt::lean_box(0);
+    x_2 = rt::lean_ctor_get(x_1, 0);
+    x_3 = rt::lean_ctor_get(x_1, 1);
+    x_4 = rt::lean_ctor_get(x_1, 2);
+    x_5 = rt::lean_string_utf8_extract_fast(x_2, x_3, x_4);
+    return x_5;
 }
 
 #[allow(
@@ -545,6 +886,222 @@ pub(crate) unsafe fn l_List_any___at___00model_exitCode_spec__1(mut x_1: u8, mut
     unused_unsafe,
     clippy::all
 )]
+pub(crate) unsafe fn l_model_entry(mut x_1: Obj, mut x_2: u8, mut x_3: u8) -> u8 {
+    let mut x_5: Obj = rt::lean_box(0);
+    let mut x_6: Obj = rt::lean_box(0);
+    let mut x_7: Obj = rt::lean_box(0);
+    let mut x_8: u8 = 0;
+    let mut x_9: u8 = 0;
+    let mut x_10: Obj = rt::lean_box(0);
+    let mut x_11: Obj = rt::lean_box(0);
+    let mut x_12: u8 = 0;
+    let mut x_13: u8 = 0;
+    let mut x_14: u8 = 0;
+    let mut x_15: u8 = 0;
+    let mut x_16: u8 = 0;
+    let mut x_17: Obj = rt::lean_box(0);
+    let mut x_18: Obj = rt::lean_box(0);
+    let mut x_19: Obj = rt::lean_box(0);
+    let mut x_20: u8 = 0;
+    let mut x_21: Obj = rt::lean_box(0);
+    let mut x_22: u8 = 0;
+    let mut x_23: u8 = 0;
+    let mut __blk: u32 = 0;
+    'body: loop {
+        match __blk {
+            0 => {
+                x_17 = l_model_entry___closed__2();
+                x_18 = rt::lean_string_utf8_byte_size(x_1);
+                x_19 = l_model_entry___closed__3();
+                x_20 = rt::lean_nat_dec_le(x_19, x_18);
+                match x_20 as u32 {
+                    0 => {
+                        {}
+                        __blk = 1;
+                        continue 'body;
+                    }
+                    1 => {
+                        x_21 = rt::lean_unsigned_to_nat(0u32);
+                        x_22 = rt::lean_string_memcmp(x_1, x_17, x_21, x_21, x_19);
+                        match x_22 as u32 {
+                            0 => {
+                                {}
+                                __blk = 1;
+                                continue 'body;
+                            }
+                            1 => {
+                                x_23 = 0u8;
+                                return x_23;
+                            }
+                            _ => rt::lean_internal_panic_unreachable(),
+                        }
+                    }
+                    _ => rt::lean_internal_panic_unreachable(),
+                }
+            }
+            1 => match x_2 as u32 {
+                0 => match x_3 as u32 {
+                    0 => {
+                        x_5 = l_model_entry___closed__0();
+                        x_6 = rt::lean_string_utf8_byte_size(x_1);
+                        x_7 = l_model_entry___closed__1();
+                        x_8 = rt::lean_nat_dec_le(x_7, x_6);
+                        match x_8 as u32 {
+                            0 => {
+                                x_9 = 0u8;
+                                return x_9;
+                            }
+                            1 => {
+                                x_10 = rt::lean_unsigned_to_nat(0u32);
+                                x_11 = rt::lean_nat_sub(x_6, x_7);
+                                x_12 = rt::lean_string_memcmp(x_1, x_5, x_11, x_10, x_7);
+                                rt::lean_dec(x_11);
+                                match x_12 as u32 {
+                                    0 => {
+                                        x_13 = 0u8;
+                                        return x_13;
+                                    }
+                                    1 => {
+                                        x_14 = 2u8;
+                                        return x_14;
+                                    }
+                                    _ => rt::lean_internal_panic_unreachable(),
+                                }
+                            }
+                            _ => rt::lean_internal_panic_unreachable(),
+                        }
+                    }
+                    1 => {
+                        x_15 = 1u8;
+                        return x_15;
+                    }
+                    _ => rt::lean_internal_panic_unreachable(),
+                },
+                1 => {
+                    x_16 = 0u8;
+                    return x_16;
+                }
+                _ => rt::lean_internal_panic_unreachable(),
+            },
+            _ => rt::lean_internal_panic_unreachable(),
+        }
+    }
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    clippy::all
+)]
+unsafe fn l_model_entry___closed__0_init() -> Obj {
+    let mut x_1: Obj = rt::lean_box(0);
+    x_1 = rt::lean_mk_string_unchecked(".lean", 5, 5);
+    return x_1;
+}
+#[allow(dead_code, non_snake_case, clippy::all)]
+pub(crate) unsafe fn l_model_entry___closed__0() -> Obj {
+    thread_local! { static CELL: core::cell::OnceCell<Obj> = const { core::cell::OnceCell::new() }; }
+    if let Some(v) = CELL.with(|c| c.get().copied()) {
+        return v;
+    }
+    let v = l_model_entry___closed__0_init();
+    rt::lean_mark_persistent(v);
+    CELL.with(|c| *c.get_or_init(|| v))
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    clippy::all
+)]
+unsafe fn l_model_entry___closed__1_init() -> Obj {
+    let mut x_1: Obj = rt::lean_box(0);
+    let mut x_2: Obj = rt::lean_box(0);
+    x_1 = l_model_entry___closed__0();
+    x_2 = rt::lean_string_utf8_byte_size(x_1);
+    return x_2;
+}
+#[allow(dead_code, non_snake_case, clippy::all)]
+pub(crate) unsafe fn l_model_entry___closed__1() -> Obj {
+    thread_local! { static CELL: core::cell::OnceCell<Obj> = const { core::cell::OnceCell::new() }; }
+    if let Some(v) = CELL.with(|c| c.get().copied()) {
+        return v;
+    }
+    let v = l_model_entry___closed__1_init();
+    rt::lean_mark_persistent(v);
+    CELL.with(|c| *c.get_or_init(|| v))
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    clippy::all
+)]
+unsafe fn l_model_entry___closed__2_init() -> Obj {
+    let mut x_1: Obj = rt::lean_box(0);
+    x_1 = rt::lean_mk_string_unchecked(".", 1, 1);
+    return x_1;
+}
+#[allow(dead_code, non_snake_case, clippy::all)]
+pub(crate) unsafe fn l_model_entry___closed__2() -> Obj {
+    thread_local! { static CELL: core::cell::OnceCell<Obj> = const { core::cell::OnceCell::new() }; }
+    if let Some(v) = CELL.with(|c| c.get().copied()) {
+        return v;
+    }
+    let v = l_model_entry___closed__2_init();
+    rt::lean_mark_persistent(v);
+    CELL.with(|c| *c.get_or_init(|| v))
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    clippy::all
+)]
+unsafe fn l_model_entry___closed__3_init() -> Obj {
+    let mut x_1: Obj = rt::lean_box(0);
+    let mut x_2: Obj = rt::lean_box(0);
+    x_1 = l_model_entry___closed__2();
+    x_2 = rt::lean_string_utf8_byte_size(x_1);
+    return x_2;
+}
+#[allow(dead_code, non_snake_case, clippy::all)]
+pub(crate) unsafe fn l_model_entry___closed__3() -> Obj {
+    thread_local! { static CELL: core::cell::OnceCell<Obj> = const { core::cell::OnceCell::new() }; }
+    if let Some(v) = CELL.with(|c| c.get().copied()) {
+        return v;
+    }
+    let v = l_model_entry___closed__3_init();
+    rt::lean_mark_persistent(v);
+    CELL.with(|c| *c.get_or_init(|| v))
+}
+
+#[allow(
+    dead_code,
+    non_snake_case,
+    unused_mut,
+    unused_assignments,
+    unused_variables,
+    unreachable_code,
+    unused_unsafe,
+    clippy::all
+)]
 pub(crate) unsafe fn l_model_writes(mut x_1: u8, mut x_2: u8) -> u8 {
     match x_1 as u32 {
         0 => {
@@ -679,6 +1236,83 @@ impl rt::FromLean for Status {
     }
 }
 
+#[doc = "Lean type `model.Location` (module `LeanRustGen.Embed.leanwisp.h016defdf85b98ea9.model`)."]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Location {
+    Stdin,
+    File { path: String },
+    Literal { text: String },
+}
+impl rt::ToLean for Location {
+    unsafe fn to_lean(self) -> Obj {
+        match self {
+            Location::Stdin => rt::lean_box(0),
+            Location::File { path: f0 } => {
+                let o = rt::lean_alloc_ctor(1, 1, 0 * core::mem::size_of::<usize>() as u32 + 0);
+                rt::lean_ctor_set(o, 0, rt::ToLean::to_lean(f0));
+                o
+            }
+            Location::Literal { text: f0 } => {
+                let o = rt::lean_alloc_ctor(2, 1, 0 * core::mem::size_of::<usize>() as u32 + 0);
+                rt::lean_ctor_set(o, 0, rt::ToLean::to_lean(f0));
+                o
+            }
+        }
+    }
+}
+impl rt::FromLean for Location {
+    unsafe fn from_lean(o: Obj) -> Self {
+        match rt::lean_obj_tag(o) {
+            0 => Location::Stdin,
+            1 => Location::File {
+                path: <String as rt::FromLean>::from_lean(rt::lean_ctor_get(o, 0)),
+            },
+            2 => Location::Literal {
+                text: <String as rt::FromLean>::from_lean(rt::lean_ctor_get(o, 0)),
+            },
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[doc = "Lean type `model.Entry` (module `LeanRustGen.Embed.leanwisp.h016defdf85b98ea9.model`)."]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Entry {
+    Skip = 0,
+    Descend = 1,
+    Format = 2,
+}
+impl Entry {
+    #[doc(hidden)]
+    pub fn from_lean_tag(tag: u32) -> Self {
+        match tag {
+            0 => Entry::Skip,
+            1 => Entry::Descend,
+            2 => Entry::Format,
+            _ => unreachable!(),
+        }
+    }
+}
+impl rt::ToLean for Entry {
+    unsafe fn to_lean(self) -> Obj {
+        rt::lean_box(self as usize)
+    }
+}
+impl rt::FromLean for Entry {
+    unsafe fn from_lean(o: Obj) -> Self {
+        Entry::from_lean_tag(rt::lean_unbox(o) as u32)
+    }
+}
+
+#[doc = "Lean: `model.usageStatus : Nat` (module `LeanRustGen.Embed.leanwisp.h016defdf85b98ea9.model`)."]
+#[::leanfran::exported("model.usageStatus")]
+pub fn usage_status() -> rt::Nat {
+    unsafe {
+        let __r: Obj = l_model_usageStatus();
+        <rt::Nat as rt::FromLean>::from_lean(__r)
+    }
+}
+
 #[doc = "Lean: `model.writable : Bool → Bool → Bool → Bool` (module `LeanRustGen.Embed.leanwisp.h016defdf85b98ea9.model`)."]
 #[::leanfran::exported("model.writable")]
 pub fn writable(write: bool, check: bool, literal: bool) -> bool {
@@ -688,6 +1322,15 @@ pub fn writable(write: bool, check: bool, literal: bool) -> bool {
         let __a2: u8 = (literal) as u8;
         let __r: u8 = l_model_writable(__a0, __a1, __a2);
         (__r) != 0
+    }
+}
+
+#[doc = "Lean: `model.failureStatus : Nat` (module `LeanRustGen.Embed.leanwisp.h016defdf85b98ea9.model`)."]
+#[::leanfran::exported("model.failureStatus")]
+pub fn failure_status() -> rt::Nat {
+    unsafe {
+        let __r: Obj = l_model_failureStatus();
+        <rt::Nat as rt::FromLean>::from_lean(__r)
     }
 }
 
@@ -759,6 +1402,18 @@ pub fn pending(write: bool, outcome: Outcome) -> bool {
     }
 }
 
+#[doc = "Lean: `model.locate : String → model.Location` (module `LeanRustGen.Embed.leanwisp.h016defdf85b98ea9.model`)."]
+#[::leanfran::exported("model.locate")]
+pub fn locate(value: impl AsRef<str>) -> Location {
+    unsafe {
+        let __a0: Obj = rt::ToLean::to_lean(value.as_ref());
+        let __r: Obj = l_model_locate(__a0);
+        let __v = <Location as rt::FromLean>::from_lean(__r);
+        rt::lean_dec(__r);
+        __v
+    }
+}
+
 #[doc = "Lean: `model.jobs : Option Nat → Nat → Nat` (module `LeanRustGen.Embed.leanwisp.h016defdf85b98ea9.model`)."]
 #[::leanfran::exported("model.jobs")]
 pub fn jobs(requested: Option<rt::Nat>, available: rt::Nat) -> rt::Nat {
@@ -786,6 +1441,19 @@ pub fn exit_code(check: bool, write: bool, outcomes: Vec<Outcome>) -> rt::Nat {
         let __v = <rt::Nat as rt::FromLean>::from_lean(__r);
         rt::lean_dec(__r);
         __v
+    }
+}
+
+#[doc = "Lean: `model.entry : String → Bool → Bool → model.Entry` (module `LeanRustGen.Embed.leanwisp.h016defdf85b98ea9.model`)."]
+#[::leanfran::exported("model.entry")]
+pub fn entry(name: impl AsRef<str>, symlink: bool, directory: bool) -> Entry {
+    unsafe {
+        let __a0: Obj = rt::ToLean::to_lean(name.as_ref());
+        let __a1: u8 = (symlink) as u8;
+        let __a2: u8 = (directory) as u8;
+        let __r: u8 = l_model_entry(__a0, __a1, __a2);
+        rt::lean_dec(__a0);
+        Entry::from_lean_tag((__r) as u32)
     }
 }
 
