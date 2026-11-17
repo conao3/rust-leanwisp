@@ -109,8 +109,9 @@ A run traced with timestamps from both the Rust workers and the Lean processes
 took 6.5 s with 6 workers. Of the 39.0 worker-seconds, building the file
 environments took 22.8 s, Lean parsing, formatting and validation 11.1 s, the
 Rust renderer and checks 2.7 s, starting the Lean processes 1.2 s, and workers
-waiting for the last worker 1.1 s. Three traced runs under load average 4–7
-gave the same shares within 2 percentage points.
+waiting for the last worker 1.1 s. In three traced runs under load average 4–7,
+building the environments took 55–59 % of the worker time, Lean parsing and
+validation 29 %, and the Rust side 7–8 %.
 
 Formatting one file at a time with one lean-fmt worker and no cache:
 
