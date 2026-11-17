@@ -67,7 +67,7 @@ impl Adapter {
             let mut cmd = Command::new("lean");
             cmd.args([
                 "--run",
-                concat!(env!("CARGO_MANIFEST_DIR"), "/lean/Format.lean"),
+                concat!(env!("CARGO_MANIFEST_DIR"), "/native/Format.lean"),
             ]);
             cmd
         };

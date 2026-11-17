@@ -238,7 +238,7 @@ fn proof_and_comment_golden() {
 
 #[test]
 fn formatter_adapter_source() {
-    let source = include_str!("../lean/Format.lean");
+    let source = include_str!("../native/Format.lean");
     let first = format_document(source, 100, None).unwrap();
     assert!(first.kept.iter().all(|k| !k.verbatim), "{:?}", first.kept);
     let second = format_document(&first.source, 100, None).unwrap();

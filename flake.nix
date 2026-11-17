@@ -22,7 +22,7 @@
           syntax = pkgs.stdenv.mkDerivation {
             pname = "leanwisp-syntax";
             version = "0.3.0";
-            src = ./lean;
+            src = ./native;
             nativeBuildInputs = [
               pkgs.lean4
               pkgs.makeWrapper
