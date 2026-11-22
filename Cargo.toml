@@ -12,7 +12,7 @@ leanfran = { version = "=0.6.0", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["unbounded_depth"] }
 libc = "0.2"
-toml = "1.2.1"
+toml = "1.2.2"
 
 [build-dependencies]
 leanfran-build = "=0.6.0"
