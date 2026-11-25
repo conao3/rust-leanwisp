@@ -13,14 +13,14 @@
 </p>
 
 <p align="center">
-  <a href="#usage">Usage</a> ·
-  <a href="#layout">Layout</a> ·
-  <a href="#commands-leanwisp-cant-format">Fallbacks</a> ·
-  <a href="#projects-and-configuration">Configuration</a> ·
-  <a href="#speed">Speed</a> ·
-  <a href="#cli">CLI</a> ·
-  <a href="#implementation">Implementation</a> ·
-  <a href="#development">Development</a> ·
+  <a href="#usage">Usage</a> |
+  <a href="#layout">Layout</a> |
+  <a href="#commands-leanwisp-cant-format">Fallbacks</a> |
+  <a href="#projects-and-configuration">Configuration</a> |
+  <a href="#speed">Speed</a> |
+  <a href="#cli">CLI</a> |
+  <a href="#implementation">Implementation</a> |
+  <a href="#development">Development</a> |
   <a href="docs/mathlib-evaluation.md">Mathlib evaluation</a>
 </p>
 
