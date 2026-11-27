@@ -229,12 +229,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "leanfran-build"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cd803b0248b91ca4165de78d5c24c03322944040c30d2f8a6de42ad0afd4502"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "sha2",
+ "syn",
+ "toml",
+]
+
+[[package]]
 name = "leanfran-macros"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "580b15a1312c605859f8a9c1f2154d4c67d32e1f36f59d3beeb12fe4e220d601"
 dependencies = [
- "leanfran-build",
+ "leanfran-build 0.6.0",
  "proc-macro2",
  "quote",
  "syn",
@@ -259,7 +274,7 @@ version = "0.3.0"
 dependencies = [
  "clap",
  "leanfran",
- "leanfran-build",
+ "leanfran-build 0.7.0",
  "libc",
  "serde",
  "serde_json",

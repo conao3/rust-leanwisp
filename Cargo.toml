@@ -15,4 +15,4 @@ libc = "0.2"
 toml = "1.2.2"
 
 [build-dependencies]
-leanfran-build = "=0.6.0"
+leanfran-build = "=0.7.0"
