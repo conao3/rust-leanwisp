@@ -8,7 +8,7 @@ repository = "https://github.com/conao3/rust-leanwisp"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-leanfran = { version = "=0.6.0", default-features = false }
+leanfran = { version = "=0.7.0", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["unbounded_depth"] }
 libc = "0.2"
